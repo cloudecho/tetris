@@ -4,15 +4,23 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 
 	"github.com/gotk3/gotk3/glib"
 	"github.com/gotk3/gotk3/gtk"
 )
 
 const (
+	SIGNAL_ACTIVATE = "activate"
+
 	ACTION_PAUSE   = "win.pause"
 	ACTION_RESUME  = "win.resume"
 	ACTION_NEWGAME = "win.newgame"
+
+	ACTION_ROTATE = "win.rotate"
+	ACTION_LEFT   = "win.left"
+	ACTION_RIGHT  = "win.right"
+	ACTION_DOWN   = "win.down"
 
 	LABEL_PAUSE   = "Pause"
 	LABEL_RESUME  = "Resume"
@@ -22,10 +30,18 @@ const (
 
 	UNIT_SIZE = 32
 )
- 
+
 var (
-	mainSpans [ROW][COL]*gtk.Label
-	previewSpans  [PRE_ROW][PRE_ROW]*gtk.Label
+	mainSpans    [ROW][COL]*gtk.Label
+	previewSpans [PRE_ROW][PRE_ROW]*gtk.Label
+
+	scoreValue *gtk.Label
+	levelValue *gtk.Label
+
+	btnRotate *gtk.Button
+	btnLeft   *gtk.Button
+	btnRight  *gtk.Button
+	btnDown   *gtk.Button
 )
 
 func GUI() {
@@ -35,11 +51,11 @@ func GUI() {
 		log.Fatal("Could not create application:", err)
 	}
 
-	application.Connect("activate", func() {
+	application.Connect(SIGNAL_ACTIVATE, func() {
 		win := newWindow(application)
 
 		aQuit := glib.SimpleActionNew("quit", nil)
-		aQuit.Connect("activate", func() {
+		aQuit.Connect(SIGNAL_ACTIVATE, func() {
 			application.Quit()
 		})
 		application.AddAction(aQuit)
@@ -57,13 +73,22 @@ func newWindow(application *gtk.Application) *gtk.ApplicationWindow {
 	}
 
 	win.SetTitle("TETRIS")
+	initTitleBar(win)
 
-	// Label text in the window
-	lbl, err := gtk.LabelNew("Use the menu button to test the actions")
-	if err != nil {
-		log.Fatal("Could not create label:", err)
-	}
+	// Centrol & Right panels
+	box, _ := gtk.BoxNew(gtk.ORIENTATION_HORIZONTAL, 10)
+	initCentralPanel(box, win)
+	initRightPanel(box)
+	addMovingButtonActions(win)
 
+	// Assemble the window
+	win.Add(box)
+	win.SetPosition(gtk.WIN_POS_MOUSE)
+	win.SetDefaultSize(500, 600)
+	return win
+}
+
+func initTitleBar(win *gtk.ApplicationWindow) {
 	// Create a header bar
 	header, err := gtk.HeaderBarNew()
 	if err != nil {
@@ -72,12 +97,6 @@ func newWindow(application *gtk.Application) *gtk.ApplicationWindow {
 	header.SetShowCloseButton(false)
 	header.SetTitle("TETRIS")
 	header.SetSubtitle("github.com/cloudecho/tetris")
-
-	// Create a new menu button
-	mbtn, err := gtk.MenuButtonNew()
-	if err != nil {
-		log.Fatal("Could not create menu button:", err)
-	}
 
 	// Set up the menu model for the button
 	menu := glib.MenuNew()
@@ -91,86 +110,75 @@ func newWindow(application *gtk.Application) *gtk.ApplicationWindow {
 	menu.Append(LABEL_NEWGAME, ACTION_NEWGAME)
 	menu.Append("Quit", "app.quit")
 
-	// Custom buttons
-	btnPause := btnPause()
-	btnNew := btnNewGame()
-
-	// Create an action in the custom action group
-	addActionTo(win, "newgame", func() {
-		lbl.SetLabel("NEW GAME!")
-	})
-
-	addActionTo(win, "pause", func() {
-		btnPause.SetLabel(LABEL_RESUME)
-		btnPause.SetActionName(ACTION_RESUME)
-		lbl.SetLabel("PAUSE!")
-	})
-
-	addActionTo(win, "resume", func() {
-		btnPause.SetLabel(LABEL_PAUSE)
-		btnPause.SetActionName(ACTION_PAUSE)
-		lbl.SetLabel("RESUME!")
-	})
+	// Create a new menu button
+	mbtn, err := gtk.MenuButtonNew()
+	if err != nil {
+		log.Fatal("Could not create menu button:", err)
+	}
 
 	mbtn.SetMenuModel(&menu.MenuModel)
 
-	// add the menu button to the header
+	// Add the menu button to the header
 	header.PackStart(mbtn)
 
-	// Add custom buttons to the end
-	buttonBox, err := gtk.ButtonBoxNew(gtk.ORIENTATION_HORIZONTAL)
-	if err != nil {
-		log.Fatal("Could not create button box:", err)
-	}
+	// Title buttons
+	btnPause := btnPause()
+	btnNew := btnNewGame()
+
+	// Add title buttons to the end
+	buttonBox, _ := gtk.ButtonBoxNew(gtk.ORIENTATION_HORIZONTAL)
 	buttonBox.Add(btnNew)
 	buttonBox.Add(btnPause)
 	header.PackEnd(buttonBox)
 
-	// Assemble the window
-	box, _ := gtk.BoxNew(gtk.ORIENTATION_HORIZONTAL, 10)
-	createCenterPanel(box, win)
-	createRightPanel(box)
-	win.Add(box)
+	addTitleButtonActions(win, btnPause)
 	win.SetTitlebar(header)
-	win.SetPosition(gtk.WIN_POS_MOUSE)
-	win.SetDefaultSize(500, 600)
-	return win
 }
 
 func btnPause() *gtk.Button {
-	btn, err := gtk.ButtonNew()
-	if err != nil {
-		log.Fatal("Could not create 'Pause' button:", err)
-	}
-
+	btn, _ := gtk.ButtonNew()
 	btn.SetActionName(ACTION_PAUSE)
 	btn.SetLabel(LABEL_PAUSE)
 	return btn
 }
 
 func btnNewGame() *gtk.Button {
-	btn, err := gtk.ButtonNew()
-	if err != nil {
-		log.Fatal("Could not create 'New Game' button:", err)
-	}
-
+	btn, _ := gtk.ButtonNew()
 	btn.SetActionName(ACTION_NEWGAME)
 	btn.SetLabel("New")
 	btn.SetTooltipText(LABEL_NEWGAME)
 	return btn
 }
 
-// Create an action in the custom action group
+func addTitleButtonActions(win *gtk.ApplicationWindow, btnPause *gtk.Button) {
+	addActionTo(win, simpleActionName4Win(ACTION_NEWGAME), func() {
+		log.Println("TODO NEW GAME!")
+	})
+
+	addActionTo(win, simpleActionName4Win(ACTION_PAUSE), func() {
+		btnPause.SetLabel(LABEL_RESUME)
+		btnPause.SetActionName(ACTION_RESUME)
+		log.Println("TODO PAUSE!")
+	})
+
+	addActionTo(win, simpleActionName4Win(ACTION_RESUME), func() {
+		btnPause.SetLabel(LABEL_PAUSE)
+		btnPause.SetActionName(ACTION_PAUSE)
+		log.Println("TODO RESUME!")
+	})
+}
+
+// Create an action in the win action group
 func addActionTo(
 	win *gtk.ApplicationWindow,
 	actionName string,
 	activateFunc func()) {
 	a := glib.SimpleActionNew(actionName, nil)
-	a.Connect("activate", activateFunc)
+	a.Connect(SIGNAL_ACTIVATE, activateFunc)
 	win.AddAction(a)
 }
 
-func createCenterPanel(parent *gtk.Box, win *gtk.ApplicationWindow) {
+func initCentralPanel(parent *gtk.Box, win *gtk.ApplicationWindow) {
 	initMainSpans()
 	grid, _ := gtk.GridNew()
 	grid.SetMarginBottom(10)
@@ -183,8 +191,11 @@ func createCenterPanel(parent *gtk.Box, win *gtk.ApplicationWindow) {
 	parent.PackStart(grid, true, true, 10)
 }
 
-func createRightPanel(parent *gtk.Box) {
+func initRightPanel(parent *gtk.Box) {
 	initPreviewSpans()
+	initValueLabels()
+	initMovingButtons()
+
 	grid0, _ := gtk.GridNew()
 	for i := 0; i < PRE_ROW; i++ {
 		for j := 0; j < PRE_ROW; j++ {
@@ -193,16 +204,10 @@ func createRightPanel(parent *gtk.Box) {
 	}
 
 	scoreLabel, _ := gtk.LabelNew("")
-	scoreValue, _ := gtk.LabelNew("")
 	levelLabel, _ := gtk.LabelNew("")
-	levelValue, _ := gtk.LabelNew("")
 	separator1, _ := gtk.LabelNew("")
 	separator2, _ := gtk.LabelNew("")
 	separator3, _ := gtk.LabelNew("")
-	btnRotate, _ := gtk.ButtonNewWithLabel("^")
-	btnLeft, _ := gtk.ButtonNewWithLabel("<")
-	btnRight, _ := gtk.ButtonNewWithLabel(">")
-	btnDown, _ := gtk.ButtonNewWithLabel("v")
 
 	scoreLabel.SetMarkup(markup("#000", UNIT_SIZE, "SCORE"))
 	scoreValue.SetMarkup(markup("#000", UNIT_SIZE, "0"))
@@ -261,4 +266,43 @@ func initPreviewSpans() {
 			previewSpans[i][j] = label
 		}
 	}
+}
+
+func initValueLabels() {
+	scoreValue, _ = gtk.LabelNew("")
+	levelValue, _ = gtk.LabelNew("")
+}
+
+func initMovingButtons() {
+	btnRotate, _ = gtk.ButtonNewWithLabel("^")
+	btnLeft, _ = gtk.ButtonNewWithLabel("<")
+	btnRight, _ = gtk.ButtonNewWithLabel(">")
+	btnDown, _ = gtk.ButtonNewWithLabel("v")
+
+	btnRotate.SetActionName(ACTION_ROTATE)
+	btnLeft.SetActionName(ACTION_LEFT)
+	btnRight.SetActionName(ACTION_RIGHT)
+	btnDown.SetActionName(ACTION_DOWN)
+}
+
+func addMovingButtonActions(win *gtk.ApplicationWindow) {
+	addActionTo(win, simpleActionName4Win(ACTION_ROTATE), func() {
+		log.Println("TODO ", ACTION_ROTATE)
+	})
+
+	addActionTo(win, simpleActionName4Win(ACTION_LEFT), func() {
+		log.Println("TODO ", ACTION_LEFT)
+	})
+
+	addActionTo(win, simpleActionName4Win(ACTION_RIGHT), func() {
+		log.Println("TODO ", ACTION_RIGHT)
+	})
+
+	addActionTo(win, simpleActionName4Win(ACTION_DOWN), func() {
+		log.Println("TODO ", ACTION_DOWN)
+	})
+}
+
+func simpleActionName4Win(fullname string) string {
+	return strings.TrimPrefix(fullname, "win.")
 }

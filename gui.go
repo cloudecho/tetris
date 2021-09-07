@@ -13,6 +13,7 @@ import (
 const (
 	SIGNAL_ACTIVATE = "activate"
 
+	ACTION_QUIT    = "app.quit"
 	ACTION_PAUSE   = "win.pause"
 	ACTION_RESUME  = "win.resume"
 	ACTION_NEWGAME = "win.newgame"
@@ -27,13 +28,14 @@ const (
 	LABEL_NEWGAME = "New Game"
 
 	DEFAULT_SPAN_COLOR = "#e7e7e7"
+	SPAN_COLOR_BLUE    = "#a8caff"
 
 	UNIT_SIZE = 32
 )
 
 var (
 	mainSpans    [ROW][COL]*gtk.Label
-	previewSpans [PRE_ROW][PRE_ROW]*gtk.Label
+	previewSpans [SHAPE_SIZE][SHAPE_SIZE]*gtk.Label
 
 	scoreValue *gtk.Label
 	levelValue *gtk.Label
@@ -42,6 +44,8 @@ var (
 	btnLeft   *gtk.Button
 	btnRight  *gtk.Button
 	btnDown   *gtk.Button
+
+	game *Game
 )
 
 func GUI() {
@@ -63,7 +67,50 @@ func GUI() {
 		win.ShowAll()
 	})
 
+	// Initialize game
+	game = NewGame()
+	go showGame(game)
+
 	os.Exit(application.Run(os.Args))
+}
+
+func showGame(g *Game) {
+	// TODO showGame
+	for {
+		select {
+		case pos := <-g.p:
+			log.Println(pos)
+			showCurrentShape(pos)
+		}
+	}
+}
+
+func showCurrentShape(pos Point) {
+	shape := game.currShape
+
+	// Hide the old shape
+	opos := Point{left: pos.oLeft, top: pos.oTop}
+	showShape(opos, shape, DEFAULT_SPAN_COLOR, true)
+
+	// Show the current shape
+	showShape(pos, shape, SPAN_COLOR_BLUE, false)
+}
+
+func showShape(pos Point, shape *Shape, color string, full bool) {
+	if pos.top < 0 || pos.left < 0 {
+		return
+	}
+
+	// Show the current shape
+	for i := 0; i < SHAPE_SIZE; i++ { // left
+		for j := 0; j < SHAPE_SIZE; j++ { // top
+			if (full || shape.data[j][i] > 0) &&
+				!checkOutOfBound(pos.left+i, pos.top+j) {
+				span := mainSpans[pos.top+j][pos.left+i]
+				span.SetMarkup(markupSpan(color))
+			}
+		}
+	}
 }
 
 func newWindow(application *gtk.Application) *gtk.ApplicationWindow {
@@ -108,7 +155,7 @@ func initTitleBar(win *gtk.ApplicationWindow) {
 	// Actions with the prefix 'win' reference actions on the current window (specific to ApplicationWindow)
 	// Other prefixes can be added to widgets via InsertActionGroup
 	menu.Append(LABEL_NEWGAME, ACTION_NEWGAME)
-	menu.Append("Quit", "app.quit")
+	menu.Append("Quit", ACTION_QUIT)
 
 	// Create a new menu button
 	mbtn, err := gtk.MenuButtonNew()
@@ -152,7 +199,8 @@ func btnNewGame() *gtk.Button {
 
 func addTitleButtonActions(win *gtk.ApplicationWindow, btnPause *gtk.Button) {
 	addActionTo(win, simpleActionName4Win(ACTION_NEWGAME), func() {
-		log.Println("TODO NEW GAME!")
+		log.Println("Start to game.")
+		game.start()
 	})
 
 	addActionTo(win, simpleActionName4Win(ACTION_PAUSE), func() {
@@ -197,8 +245,8 @@ func initRightPanel(parent *gtk.Box) {
 	initMovingButtons()
 
 	grid0, _ := gtk.GridNew()
-	for i := 0; i < PRE_ROW; i++ {
-		for j := 0; j < PRE_ROW; j++ {
+	for i := 0; i < SHAPE_SIZE; i++ {
+		for j := 0; j < SHAPE_SIZE; j++ {
 			grid0.Attach(previewSpans[i][j], j+1, i, 1, 1)
 		}
 	}
@@ -234,7 +282,7 @@ func initRightPanel(parent *gtk.Box) {
 	parent.PackEnd(grid, true, true, 10)
 }
 
-func span(color string) string {
+func markupSpan(color string) string {
 	return fmt.Sprintf(
 		"<span background='%s' foreground='%s' font='%d'>✿</span>",
 		color, color, UNIT_SIZE)
@@ -250,7 +298,7 @@ func initMainSpans() {
 	for i := 0; i < ROW; i++ {
 		for j := 0; j < COL; j++ {
 			label, _ := gtk.LabelNew("")
-			label.SetMarkup(span(DEFAULT_SPAN_COLOR))
+			label.SetMarkup(markupSpan(DEFAULT_SPAN_COLOR))
 			label.SetSizeRequest(UNIT_SIZE, UNIT_SIZE)
 			mainSpans[i][j] = label
 		}
@@ -258,10 +306,10 @@ func initMainSpans() {
 }
 
 func initPreviewSpans() {
-	for i := 0; i < PRE_ROW; i++ {
-		for j := 0; j < PRE_ROW; j++ {
+	for i := 0; i < SHAPE_SIZE; i++ {
+		for j := 0; j < SHAPE_SIZE; j++ {
 			label, _ := gtk.LabelNew("")
-			label.SetMarkup(span(DEFAULT_SPAN_COLOR))
+			label.SetMarkup(markupSpan(DEFAULT_SPAN_COLOR))
 			label.SetSizeRequest(UNIT_SIZE, UNIT_SIZE)
 			previewSpans[i][j] = label
 		}
@@ -287,7 +335,7 @@ func initMovingButtons() {
 
 func addMovingButtonActions(win *gtk.ApplicationWindow) {
 	addActionTo(win, simpleActionName4Win(ACTION_ROTATE), func() {
-		log.Println("TODO ", ACTION_ROTATE)
+		game.rotate()
 	})
 
 	addActionTo(win, simpleActionName4Win(ACTION_LEFT), func() {

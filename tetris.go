@@ -78,6 +78,7 @@ type Game struct {
 	l chan uint8 // level chan
 	s chan uint  // score chan
 	t chan int32 // state chan
+	n chan bool  // show next shape
 
 	m sync.Mutex
 }
@@ -91,6 +92,7 @@ func NewGame() *Game {
 		p:         make(chan Point),
 		l:         make(chan uint8),
 		s:         make(chan uint),
+		n:         make(chan bool),
 	}
 }
 
@@ -99,7 +101,7 @@ func (g *Game) start() error {
 	defer g.m.Unlock()
 
 	if g.state > SATE_GAMEOVER {
-		return errors.New(fmt.Sprintf("Could not start as current state is: %d", g.state))
+		return fmt.Errorf("could not start as current state is: %d", g.state)
 	}
 
 	g.state = STATE_GAMING
@@ -110,14 +112,22 @@ func (g *Game) start() error {
 func moveForward(g *Game) {
 	for {
 		g.pos.sendTo(g.p)
+		if g.pos.oLeft < 0 {
+			g.n <- true
+		}
 		time.Sleep(speedDuration(g))
 
 		// TODO do more checks
 		pos, err := g.pos.moveDown()
 		if err != nil || shapeOutOfBound(pos, g.currShape) {
 			g.pos = landingPosition()
-			g.currShape = g.nextShape
-			g.nextShape = randShape()
+			g.m.Lock()
+			{
+				g.currShape = g.nextShape
+				g.nextShape = randShape()
+				g.n <- true
+			}
+			g.m.Unlock()
 			continue
 		}
 		g.pos = pos
@@ -151,7 +161,7 @@ func checkOutOfBound(left, top int) bool {
 // Returns an int value in miliseconds
 func speed(g *Game) int {
 	// TODO
-	return 500
+	return 300
 }
 
 func speedDuration(g *Game) time.Duration {
@@ -177,6 +187,8 @@ func (g *Game) resume() {
 }
 
 func (g *Game) rotate() {
+	g.m.Lock()
+	defer g.m.Unlock()
 	g.currShape = g.currShape.rotate()
 }
 

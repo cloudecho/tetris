@@ -6,12 +6,21 @@ import (
 	"os"
 	"strings"
 
+	"github.com/gotk3/gotk3/cairo"
+	"github.com/gotk3/gotk3/gdk"
 	"github.com/gotk3/gotk3/glib"
 	"github.com/gotk3/gotk3/gtk"
 )
 
 const (
-	SIGNAL_ACTIVATE = "activate"
+	SIGNAL_ACTIVATE        = "activate"
+	SIGNAL_DRAW            = "draw"
+	SIGNAL_KEY_PRESS_EVENT = "key-press-event"
+
+	KEY_LEFT  uint = 65361
+	KEY_UP    uint = 65362
+	KEY_RIGHT uint = 65363
+	KEY_DOWN  uint = 65364
 
 	ACTION_QUIT    = "app.quit"
 	ACTION_PAUSE   = "win.pause"
@@ -27,15 +36,16 @@ const (
 	LABEL_RESUME  = "Resume"
 	LABEL_NEWGAME = "New Game"
 
-	DEFAULT_SPAN_COLOR = "#e7e7e7"
-	SPAN_COLOR_BLUE    = "#a8caff"
-
 	UNIT_SIZE = 32
+	SPAN_SIZE = UNIT_SIZE - 2
 )
 
 var (
-	mainSpans    [ROW][COL]*gtk.Label
-	previewSpans [SHAPE_SIZE][SHAPE_SIZE]*gtk.Label
+	RGB_COLOR_GRAY = [3]float64{231 / 255.0, 231 / 255.0, 231 / 255.0}
+	RGB_COLOR_BLUE = [3]float64{168 / 255.0, 202 / 255.0, 1}
+
+	centralDa *gtk.DrawingArea
+	rightDa   *gtk.DrawingArea
 
 	scoreValue *gtk.Label
 	levelValue *gtk.Label
@@ -81,6 +91,8 @@ func showGame(g *Game) {
 		case pos := <-g.p:
 			log.Println(pos)
 			showCurrentShape(pos)
+		case <-g.n:
+			showNextShape()
 		}
 	}
 }
@@ -90,27 +102,47 @@ func showCurrentShape(pos Point) {
 
 	// Hide the old shape
 	opos := Point{left: pos.oLeft, top: pos.oTop}
-	showShape(opos, shape, DEFAULT_SPAN_COLOR, true)
+	showShape(opos, shape, RGB_COLOR_GRAY, true, centralDa)
 
 	// Show the current shape
-	showShape(pos, shape, SPAN_COLOR_BLUE, false)
+	showShape(pos, shape, RGB_COLOR_BLUE, false, centralDa)
 }
 
-func showShape(pos Point, shape *Shape, color string, full bool) {
+func showNextShape() {
+	shape := game.nextShape
+
+	// Hide the old shape
+	pos := Point{left: 0, top: 0}
+	showShape(pos, shape, RGB_COLOR_GRAY, true, rightDa)
+
+	// Show the current shape
+	showShape(pos, shape, RGB_COLOR_BLUE, false, rightDa)
+}
+
+func showShape(pos Point, shape *Shape, rgb [3]float64, full bool, da *gtk.DrawingArea) {
 	if pos.top < 0 || pos.left < 0 {
 		return
 	}
 
 	// Show the current shape
-	for i := 0; i < SHAPE_SIZE; i++ { // left
-		for j := 0; j < SHAPE_SIZE; j++ { // top
-			if (full || shape.data[j][i] > 0) &&
-				!checkOutOfBound(pos.left+i, pos.top+j) {
-				span := mainSpans[pos.top+j][pos.left+i]
-				span.SetMarkup(markupSpan(color))
+	da.Connect(SIGNAL_DRAW, func(da *gtk.DrawingArea, cr *cairo.Context) {
+		cr.SetSourceRGB(rgb[0], rgb[1], rgb[2])
+		for i := 0; i < SHAPE_SIZE; i++ { // left
+			for j := 0; j < SHAPE_SIZE; j++ { // top
+				if (full || shape.data[j][i] > 0) &&
+					!checkOutOfBound(pos.left+i, pos.top+j) {
+					cr.Rectangle(
+						float64(pos.left+i)*UNIT_SIZE,
+						float64(pos.top+j)*UNIT_SIZE,
+						SPAN_SIZE,
+						SPAN_SIZE)
+				}
 			}
 		}
-	}
+		cr.Fill()
+	})
+
+	da.QueueDraw()
 }
 
 func newWindow(application *gtk.Application) *gtk.ApplicationWindow {
@@ -124,7 +156,7 @@ func newWindow(application *gtk.Application) *gtk.ApplicationWindow {
 
 	// Centrol & Right panels
 	box, _ := gtk.BoxNew(gtk.ORIENTATION_HORIZONTAL, 10)
-	initCentralPanel(box, win)
+	initCentralPanel(box)
 	initRightPanel(box)
 	addMovingButtonActions(win)
 
@@ -226,30 +258,40 @@ func addActionTo(
 	win.AddAction(a)
 }
 
-func initCentralPanel(parent *gtk.Box, win *gtk.ApplicationWindow) {
-	initMainSpans()
-	grid, _ := gtk.GridNew()
-	grid.SetMarginBottom(10)
-	for i := 0; i < ROW; i++ {
-		for j := 0; j < COL; j++ {
-			grid.Attach(mainSpans[i][j], j, i, 1, 1)
+func initCentralPanel(parent *gtk.Box) {
+	da, _ := gtk.DrawingAreaNew()
+	da.Connect(SIGNAL_DRAW, func(da *gtk.DrawingArea, cr *cairo.Context) {
+		cr.SetSourceRGB(RGB_COLOR_GRAY[0], RGB_COLOR_GRAY[1], RGB_COLOR_GRAY[2])
+		for i := 0; i < ROW; i++ {
+			for j := 0; j < COL; j++ {
+				cr.Rectangle(float64(j*UNIT_SIZE), float64(i*UNIT_SIZE), SPAN_SIZE, SPAN_SIZE)
+			}
 		}
-	}
+		cr.Fill()
+	})
+	da.SetSizeRequest(COL*UNIT_SIZE, (ROW+1)*UNIT_SIZE)
+	centralDa = da
 
-	parent.PackStart(grid, true, true, 10)
+	parent.PackStart(da, true, true, 10)
 }
 
 func initRightPanel(parent *gtk.Box) {
-	initPreviewSpans()
 	initValueLabels()
 	initMovingButtons()
 
-	grid0, _ := gtk.GridNew()
-	for i := 0; i < SHAPE_SIZE; i++ {
-		for j := 0; j < SHAPE_SIZE; j++ {
-			grid0.Attach(previewSpans[i][j], j+1, i, 1, 1)
+	da, _ := gtk.DrawingAreaNew()
+	da.Connect(SIGNAL_DRAW, func(da *gtk.DrawingArea, cr *cairo.Context) {
+		cr.SetSourceRGB(RGB_COLOR_GRAY[0], RGB_COLOR_GRAY[1], RGB_COLOR_GRAY[2])
+		for i := 0; i < SHAPE_SIZE; i++ {
+			for j := 0; j < SHAPE_SIZE; j++ {
+				cr.Rectangle(float64(j*UNIT_SIZE), float64(i*UNIT_SIZE), SPAN_SIZE, SPAN_SIZE)
+			}
 		}
-	}
+		cr.Fill()
+	})
+	da.SetSizeRequest(SHAPE_SIZE*UNIT_SIZE, SHAPE_SIZE*UNIT_SIZE)
+	da.SetMarginTop(UNIT_SIZE)
+	rightDa = da
 
 	scoreLabel, _ := gtk.LabelNew("")
 	levelLabel, _ := gtk.LabelNew("")
@@ -266,7 +308,7 @@ func initRightPanel(parent *gtk.Box) {
 	separator3.SetMarkup(markup("#000", UNIT_SIZE, " "))
 
 	grid, _ := gtk.GridNew()
-	grid.Attach(grid0, 0, 0, 3, 1)
+	grid.Attach(da, 0, 0, 3, 1)
 	grid.Attach(separator1, 0, 1, 3, 1)
 	grid.Attach(scoreLabel, 0, 2, 3, 1)
 	grid.Attach(scoreValue, 0, 3, 3, 1)
@@ -282,38 +324,10 @@ func initRightPanel(parent *gtk.Box) {
 	parent.PackEnd(grid, true, true, 10)
 }
 
-func markupSpan(color string) string {
-	return fmt.Sprintf(
-		"<span background='%s' foreground='%s' font='%d'>✿</span>",
-		color, color, UNIT_SIZE)
-}
-
 func markup(color string, fontSize int, text string) string {
 	return fmt.Sprintf(
 		"<span foreground='%s' font='%d'>%s</span>",
 		color, fontSize, text)
-}
-
-func initMainSpans() {
-	for i := 0; i < ROW; i++ {
-		for j := 0; j < COL; j++ {
-			label, _ := gtk.LabelNew("")
-			label.SetMarkup(markupSpan(DEFAULT_SPAN_COLOR))
-			label.SetSizeRequest(UNIT_SIZE, UNIT_SIZE)
-			mainSpans[i][j] = label
-		}
-	}
-}
-
-func initPreviewSpans() {
-	for i := 0; i < SHAPE_SIZE; i++ {
-		for j := 0; j < SHAPE_SIZE; j++ {
-			label, _ := gtk.LabelNew("")
-			label.SetMarkup(markupSpan(DEFAULT_SPAN_COLOR))
-			label.SetSizeRequest(UNIT_SIZE, UNIT_SIZE)
-			previewSpans[i][j] = label
-		}
-	}
 }
 
 func initValueLabels() {
@@ -334,21 +348,24 @@ func initMovingButtons() {
 }
 
 func addMovingButtonActions(win *gtk.ApplicationWindow) {
-	addActionTo(win, simpleActionName4Win(ACTION_ROTATE), func() {
-		game.rotate()
+	keyMap := map[uint]func(){
+		KEY_LEFT:  func() {},
+		KEY_UP:    func() { game.rotate() },
+		KEY_RIGHT: func() {},
+		KEY_DOWN:  func() {},
+	}
+
+	win.Connect(SIGNAL_KEY_PRESS_EVENT, func(win *gtk.ApplicationWindow, ev *gdk.Event) {
+		keyEvent := &gdk.EventKey{ev}
+		if action, found := keyMap[keyEvent.KeyVal()]; found {
+			action()
+		}
 	})
 
-	addActionTo(win, simpleActionName4Win(ACTION_LEFT), func() {
-		log.Println("TODO ", ACTION_LEFT)
-	})
-
-	addActionTo(win, simpleActionName4Win(ACTION_RIGHT), func() {
-		log.Println("TODO ", ACTION_RIGHT)
-	})
-
-	addActionTo(win, simpleActionName4Win(ACTION_DOWN), func() {
-		log.Println("TODO ", ACTION_DOWN)
-	})
+	addActionTo(win, simpleActionName4Win(ACTION_ROTATE), keyMap[KEY_UP])
+	addActionTo(win, simpleActionName4Win(ACTION_LEFT), keyMap[KEY_LEFT])
+	addActionTo(win, simpleActionName4Win(ACTION_RIGHT), keyMap[KEY_RIGHT])
+	addActionTo(win, simpleActionName4Win(ACTION_DOWN), keyMap[KEY_DOWN])
 }
 
 func simpleActionName4Win(fullname string) string {

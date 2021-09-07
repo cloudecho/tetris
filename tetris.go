@@ -19,43 +19,43 @@ const (
 	STATE_PAUSED
 )
 
-var POSITION_OUT_OF_BOUNDS = errors.New("Position out of bounds")
+var ErrorPositionOutOfBounds = errors.New("position out of bounds")
 
 type Point struct {
 	left  int
 	top   int
-	oLeft int // old left
-	oTop  int // old top
+	oleft int // old left
+	otop  int // old top
 }
 
-var INVALID_POINT = Point{-1, -1, -1, -1}
+var InvalidPoint = Point{-1, -1, -1, -1}
 
 func (p Point) moveLeft() (Point, error) {
-	if p.left-1 < 0 {
-		return INVALID_POINT, POSITION_OUT_OF_BOUNDS
+	if p.left+SHAPE_SIZE-1 < 0 {
+		return InvalidPoint, ErrorPositionOutOfBounds
 	}
-	p.oLeft = p.left
-	p.oTop = p.top
+	p.oleft = p.left
+	p.otop = p.top
 	p.left--
 	return p, nil
 }
 
 func (p Point) moveRight() (Point, error) {
 	if p.left+1 > COL-1 {
-		return INVALID_POINT, POSITION_OUT_OF_BOUNDS
+		return InvalidPoint, ErrorPositionOutOfBounds
 	}
-	p.oLeft = p.left
-	p.oTop = p.top
+	p.oleft = p.left
+	p.otop = p.top
 	p.left++
 	return p, nil
 }
 
 func (p Point) moveDown() (Point, error) {
 	if p.top+1 > ROW-1 {
-		return INVALID_POINT, POSITION_OUT_OF_BOUNDS
+		return InvalidPoint, ErrorPositionOutOfBounds
 	}
-	p.oLeft = p.left
-	p.oTop = p.top
+	p.oleft = p.left
+	p.otop = p.top
 	p.top++
 	return p, nil
 }
@@ -112,46 +112,33 @@ func (g *Game) start() error {
 func moveForward(g *Game) {
 	for {
 		g.pos.sendTo(g.p)
-		if g.pos.oLeft < 0 {
+		if g.pos.oleft < 0 {
 			g.n <- true
 		}
 		time.Sleep(speedDuration(g))
 
 		// TODO do more checks
 		pos, err := g.pos.moveDown()
-		if err != nil || shapeOutOfBound(pos, g.currShape) {
-			g.pos = landingPosition()
-			g.m.Lock()
-			{
-				g.currShape = g.nextShape
-				g.nextShape = randShape()
-				g.n <- true
-			}
-			g.m.Unlock()
+		if err == nil && !shapeOutOfBound(pos, g.currShape) {
+			g.pos = pos
 			continue
 		}
-		g.pos = pos
+
+		g.m.Lock()
+		{
+			g.pos = landingPosition()
+			g.currShape = g.nextShape
+			g.nextShape = randShape()
+		}
+		g.m.Unlock()
+		g.n <- true
 	}
 }
 
 func shapeOutOfBound(pos Point, shape *Shape) bool {
-	if pos.top < 0 || pos.left < 0 {
-		return false
-	}
-
-	// Show the current shape
-	for i := 0; i < SHAPE_SIZE; i++ { // left
-		for j := 0; j < SHAPE_SIZE; j++ { // top
-			if shape.data[j][i] <= 0 {
-				continue
-			}
-			if checkOutOfBound(pos.left+i, pos.top+j) {
-				return true
-			}
-		}
-	}
-
-	return false
+	b := shape.bounds()
+	return checkOutOfBound(pos.left+b.x, pos.top+b.y) ||
+		checkOutOfBound(pos.left+b.x2, pos.top+b.y2)
 }
 
 func checkOutOfBound(left, top int) bool {
@@ -161,7 +148,7 @@ func checkOutOfBound(left, top int) bool {
 // Returns an int value in miliseconds
 func speed(g *Game) int {
 	// TODO
-	return 300
+	return 500
 }
 
 func speedDuration(g *Game) time.Duration {
@@ -173,8 +160,8 @@ func landingPosition() Point {
 	return Point{
 		left:  (COL-SHAPE_SIZE)/2 + 1,
 		top:   0,
-		oLeft: -1,
-		oTop:  -1,
+		oleft: -1,
+		otop:  -1,
 	}
 }
 
@@ -189,19 +176,40 @@ func (g *Game) resume() {
 func (g *Game) rotate() {
 	g.m.Lock()
 	defer g.m.Unlock()
+
 	g.currShape = g.currShape.rotate()
 }
 
 func (g *Game) moveLeft() {
+	g.m.Lock()
+	defer g.m.Unlock()
 
+	pos, err := g.pos.moveLeft()
+	if err == nil && !shapeOutOfBound(pos, g.currShape) {
+		g.pos = pos
+		pos.sendTo(g.p)
+	}
 }
 
 func (g *Game) moveRight() {
+	g.m.Lock()
+	defer g.m.Unlock()
 
+	pos, err := g.pos.moveRight()
+	if err == nil && !shapeOutOfBound(pos, g.currShape) {
+		g.pos = pos
+		pos.sendTo(g.p)
+	}
 }
 
 func (g *Game) dropDown() {
+	g.m.Lock()
+	defer g.m.Unlock()
 
+	for pos, err := g.pos.moveDown(); err == nil && !shapeOutOfBound(pos, g.currShape); pos, err = g.pos.moveDown() {
+		g.pos = pos
+		pos.sendTo(g.p)
+	}
 }
 
 func (g *Game) reset() {

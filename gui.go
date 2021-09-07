@@ -41,8 +41,8 @@ const (
 )
 
 var (
-	RGB_COLOR_GRAY = [3]float64{231 / 255.0, 231 / 255.0, 231 / 255.0}
-	RGB_COLOR_BLUE = [3]float64{168 / 255.0, 202 / 255.0, 1}
+	RGB_COLOR_GRAY = Rgb{231 / 255.0, 231 / 255.0, 231 / 255.0}
+	RGB_COLOR_BLUE = Rgb{168 / 255.0, 202 / 255.0, 1}
 
 	centralDa *gtk.DrawingArea
 	rightDa   *gtk.DrawingArea
@@ -57,6 +57,8 @@ var (
 
 	game *Game
 )
+
+type Rgb [3]float64
 
 func GUI() {
 	const appID = "com.github.cloudecho.tetris"
@@ -89,7 +91,7 @@ func showGame(g *Game) {
 	for {
 		select {
 		case pos := <-g.p:
-			log.Println(pos)
+			log.Println(pos) // debug
 			showCurrentShape(pos)
 		case <-g.n:
 			showNextShape()
@@ -101,7 +103,7 @@ func showCurrentShape(pos Point) {
 	shape := game.currShape
 
 	// Hide the old shape
-	opos := Point{left: pos.oLeft, top: pos.oTop}
+	opos := Point{left: pos.oleft, top: pos.otop}
 	showShape(opos, shape, RGB_COLOR_GRAY, true, centralDa)
 
 	// Show the current shape
@@ -119,8 +121,8 @@ func showNextShape() {
 	showShape(pos, shape, RGB_COLOR_BLUE, false, rightDa)
 }
 
-func showShape(pos Point, shape *Shape, rgb [3]float64, full bool, da *gtk.DrawingArea) {
-	if pos.top < 0 || pos.left < 0 {
+func showShape(pos Point, shape *Shape, rgb Rgb, full bool, da *gtk.DrawingArea) {
+	if pos.top < 0 {
 		return
 	}
 
@@ -349,10 +351,10 @@ func initMovingButtons() {
 
 func addMovingButtonActions(win *gtk.ApplicationWindow) {
 	keyMap := map[uint]func(){
-		KEY_LEFT:  func() {},
+		KEY_LEFT:  func() { game.moveLeft() },
 		KEY_UP:    func() { game.rotate() },
-		KEY_RIGHT: func() {},
-		KEY_DOWN:  func() {},
+		KEY_RIGHT: func() { game.moveRight() },
+		KEY_DOWN:  func() { game.dropDown() },
 	}
 
 	win.Connect(SIGNAL_KEY_PRESS_EVENT, func(win *gtk.ApplicationWindow, ev *gdk.Event) {

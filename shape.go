@@ -1,6 +1,7 @@
 package tetris
 
 import (
+	"log"
 	"math/rand"
 	"time"
 )
@@ -306,6 +307,56 @@ func (a *Shape) rotate() *Shape {
 	return shapes[a.next]
 }
 
+type ShapeBounds struct {
+	x  int // left
+	y  int // top
+	x2 int // left+width
+	y2 int // top+height
+}
+
+var shapeBoundsMap = make(map[int]ShapeBounds)
+
+func (a *Shape) bounds() ShapeBounds {
+	if len(shapeBoundsMap) == 0 {
+		log.Fatalln("should init first")
+	}
+	return shapeBoundsMap[a.id]
+}
+
+func computeBounds(a *Shape) ShapeBounds {
+	d := a.data
+	x := SHAPE_SIZE
+	y := SHAPE_SIZE
+	x2 := 0
+	y2 := 0
+
+	for i := 0; i < SHAPE_SIZE; i++ {
+		for j := 0; j < SHAPE_SIZE; j++ {
+			if d[j][i] == 0 {
+				continue
+			}
+			if x > i {
+				x = i
+			}
+			if y > j {
+				y = j
+			}
+			if x2 < i {
+				x2 = i
+			}
+			if y2 < j {
+				y2 = j
+			}
+		}
+	}
+
+	return ShapeBounds{x, y, x2, y2}
+}
+
 func init() {
 	rand.Seed(time.Now().UnixNano())
+
+	for id, shape := range shapes {
+		shapeBoundsMap[id] = computeBounds(shape)
+	}
 }

@@ -1,6 +1,6 @@
 ## Introduction
 
-TODO Introduction
+A Tetris game written in Go, GUI drived by gtk3. 
 
 ## Build
 

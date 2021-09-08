@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gotk3/gotk3/cairo"
 	"github.com/gotk3/gotk3/gdk"
@@ -25,16 +27,19 @@ const (
 	ACTION_QUIT    = "app.quit"
 	ACTION_PAUSE   = "win.pause"
 	ACTION_RESUME  = "win.resume"
-	ACTION_NEWGAME = "win.newgame"
+	ACTION_NEWGAME = "win.start"
 
 	ACTION_ROTATE = "win.rotate"
 	ACTION_LEFT   = "win.left"
 	ACTION_RIGHT  = "win.right"
 	ACTION_DOWN   = "win.down"
 
-	LABEL_PAUSE   = "Pause"
-	LABEL_RESUME  = "Resume"
-	LABEL_NEWGAME = "New Game"
+	LABEL_PAUSE     = "Pause"
+	LABEL_RESUME    = "Resume"
+	LABEL_STARTGAME = "Start Game"
+
+	LABEL_GAMEOVER = "GAME OVER"
+	LABEL_SCORE    = "SCORE"
 
 	UNIT_SIZE = 32
 	SPAN_SIZE = UNIT_SIZE - 2
@@ -47,6 +52,7 @@ var (
 	centralDa *gtk.DrawingArea
 	rightDa   *gtk.DrawingArea
 
+	stateLabel *gtk.Label
 	scoreValue *gtk.Label
 	levelValue *gtk.Label
 
@@ -87,16 +93,35 @@ func GUI() {
 }
 
 func showGame(g *Game) {
-	// TODO showGame
 	for {
 		select {
-		case pos := <-g.p:
-			log.Println(pos) // debug
+		case pos := <-g.chanPos:
 			showCurrentShape(pos)
-		case <-g.n:
+		case <-g.chanNexts:
 			showNextShape()
+		case state := <-g.chanState:
+			switch state {
+			case SATE_GAMEOVER:
+				log.Println(LABEL_GAMEOVER)
+				stateLabel.SetLabel(LABEL_GAMEOVER)
+			case STATE_GAMING:
+				log.Println("Start to game.")
+				stateLabel.SetLabel("")
+			case STATE_ZERO:
+				// reset gui
+				resetGui()
+			}
+		case level := <-g.chanLevel:
+			levelValue.SetMarkup(markup("#000", UNIT_SIZE, strconv.Itoa(int(level))))
+		case score := <-g.chanScore:
+			scoreValue.SetMarkup(markup("#000", UNIT_SIZE, strconv.FormatUint(score, 10)))
 		}
 	}
+}
+
+func resetGui() {
+	drawBackgroud(centralDa, ROW, COL)
+	centralDa.QueueDraw()
 }
 
 func showCurrentShape(pos Point) {
@@ -121,7 +146,7 @@ func showNextShape() {
 	showShape(pos, shape, RGB_COLOR_BLUE, false, rightDa)
 }
 
-func showShape(pos Point, shape *Shape, rgb Rgb, full bool, da *gtk.DrawingArea) {
+func showShape(pos Point, shape *Shape, rgb Rgb, erase bool, da *gtk.DrawingArea) {
 	if pos.top < 0 {
 		return
 	}
@@ -131,8 +156,8 @@ func showShape(pos Point, shape *Shape, rgb Rgb, full bool, da *gtk.DrawingArea)
 		cr.SetSourceRGB(rgb[0], rgb[1], rgb[2])
 		for i := 0; i < SHAPE_SIZE; i++ { // left
 			for j := 0; j < SHAPE_SIZE; j++ { // top
-				if (full || shape.data[j][i] > 0) &&
-					!checkOutOfBound(pos.left+i, pos.top+j) {
+				if !checkOutOfBounds(pos.left+i, pos.top+j) &&
+					(erase && game.model[pos.top+j][pos.left+i] == 0 || shape.data[j][i] > 0) {
 					cr.Rectangle(
 						float64(pos.left+i)*UNIT_SIZE,
 						float64(pos.top+j)*UNIT_SIZE,
@@ -144,7 +169,10 @@ func showShape(pos Point, shape *Shape, rgb Rgb, full bool, da *gtk.DrawingArea)
 		cr.Fill()
 	})
 
-	da.QueueDraw()
+	x := pos.left * UNIT_SIZE
+	y := pos.top * UNIT_SIZE
+	w := SHAPE_SIZE * UNIT_SIZE
+	da.QueueDrawArea(x, y, w, w)
 }
 
 func newWindow(application *gtk.Application) *gtk.ApplicationWindow {
@@ -188,7 +216,7 @@ func initTitleBar(win *gtk.ApplicationWindow) {
 	// Actions with the prefix 'app' reference actions on the application
 	// Actions with the prefix 'win' reference actions on the current window (specific to ApplicationWindow)
 	// Other prefixes can be added to widgets via InsertActionGroup
-	menu.Append(LABEL_NEWGAME, ACTION_NEWGAME)
+	menu.Append(LABEL_STARTGAME, ACTION_NEWGAME)
 	menu.Append("Quit", ACTION_QUIT)
 
 	// Create a new menu button
@@ -204,11 +232,11 @@ func initTitleBar(win *gtk.ApplicationWindow) {
 
 	// Title buttons
 	btnPause := btnPause()
-	btnNew := btnNewGame()
+	btnStart := btnStart()
 
 	// Add title buttons to the end
 	buttonBox, _ := gtk.ButtonBoxNew(gtk.ORIENTATION_HORIZONTAL)
-	buttonBox.Add(btnNew)
+	buttonBox.Add(btnStart)
 	buttonBox.Add(btnPause)
 	header.PackEnd(buttonBox)
 
@@ -223,17 +251,16 @@ func btnPause() *gtk.Button {
 	return btn
 }
 
-func btnNewGame() *gtk.Button {
+func btnStart() *gtk.Button {
 	btn, _ := gtk.ButtonNew()
 	btn.SetActionName(ACTION_NEWGAME)
-	btn.SetLabel("New")
-	btn.SetTooltipText(LABEL_NEWGAME)
+	btn.SetLabel("Start")
+	btn.SetTooltipText(LABEL_STARTGAME)
 	return btn
 }
 
 func addTitleButtonActions(win *gtk.ApplicationWindow, btnPause *gtk.Button) {
 	addActionTo(win, simpleActionName4Win(ACTION_NEWGAME), func() {
-		log.Println("Start to game.")
 		game.start()
 	})
 
@@ -262,19 +289,23 @@ func addActionTo(
 
 func initCentralPanel(parent *gtk.Box) {
 	da, _ := gtk.DrawingAreaNew()
+	drawBackgroud(da, ROW, COL)
+	da.SetSizeRequest(COL*UNIT_SIZE, (ROW+1)*UNIT_SIZE)
+	centralDa = da
+
+	parent.PackStart(da, true, true, 10)
+}
+
+func drawBackgroud(da *gtk.DrawingArea, row, col int) {
 	da.Connect(SIGNAL_DRAW, func(da *gtk.DrawingArea, cr *cairo.Context) {
 		cr.SetSourceRGB(RGB_COLOR_GRAY[0], RGB_COLOR_GRAY[1], RGB_COLOR_GRAY[2])
-		for i := 0; i < ROW; i++ {
-			for j := 0; j < COL; j++ {
+		for i := 0; i < row; i++ {
+			for j := 0; j < col; j++ {
 				cr.Rectangle(float64(j*UNIT_SIZE), float64(i*UNIT_SIZE), SPAN_SIZE, SPAN_SIZE)
 			}
 		}
 		cr.Fill()
 	})
-	da.SetSizeRequest(COL*UNIT_SIZE, (ROW+1)*UNIT_SIZE)
-	centralDa = da
-
-	parent.PackStart(da, true, true, 10)
 }
 
 func initRightPanel(parent *gtk.Box) {
@@ -282,24 +313,18 @@ func initRightPanel(parent *gtk.Box) {
 	initMovingButtons()
 
 	da, _ := gtk.DrawingAreaNew()
-	da.Connect(SIGNAL_DRAW, func(da *gtk.DrawingArea, cr *cairo.Context) {
-		cr.SetSourceRGB(RGB_COLOR_GRAY[0], RGB_COLOR_GRAY[1], RGB_COLOR_GRAY[2])
-		for i := 0; i < SHAPE_SIZE; i++ {
-			for j := 0; j < SHAPE_SIZE; j++ {
-				cr.Rectangle(float64(j*UNIT_SIZE), float64(i*UNIT_SIZE), SPAN_SIZE, SPAN_SIZE)
-			}
-		}
-		cr.Fill()
-	})
+	drawBackgroud(da, SHAPE_SIZE, SHAPE_SIZE)
 	da.SetSizeRequest(SHAPE_SIZE*UNIT_SIZE, SHAPE_SIZE*UNIT_SIZE)
 	da.SetMarginTop(UNIT_SIZE)
 	rightDa = da
 
+	stateLabel, _ = gtk.LabelNew("")
 	scoreLabel, _ := gtk.LabelNew("")
 	levelLabel, _ := gtk.LabelNew("")
 	separator1, _ := gtk.LabelNew("")
 	separator2, _ := gtk.LabelNew("")
 	separator3, _ := gtk.LabelNew("")
+	separator4, _ := gtk.LabelNew("")
 
 	scoreLabel.SetMarkup(markup("#000", UNIT_SIZE, "SCORE"))
 	scoreValue.SetMarkup(markup("#000", UNIT_SIZE, "0"))
@@ -308,6 +333,7 @@ func initRightPanel(parent *gtk.Box) {
 	separator1.SetMarkup(markup("#000", 4*UNIT_SIZE, " "))
 	separator2.SetMarkup(markup("#000", UNIT_SIZE, " "))
 	separator3.SetMarkup(markup("#000", UNIT_SIZE, " "))
+	separator4.SetMarkup(markup("#000", UNIT_SIZE/2, " "))
 
 	grid, _ := gtk.GridNew()
 	grid.Attach(da, 0, 0, 3, 1)
@@ -322,6 +348,8 @@ func initRightPanel(parent *gtk.Box) {
 	grid.Attach(btnLeft, 0, 9, 1, 1)
 	grid.Attach(btnRight, 2, 9, 1, 1)
 	grid.Attach(btnDown, 1, 10, 1, 1)
+	grid.Attach(separator4, 0, 11, 3, 1)
+	grid.Attach(stateLabel, 0, 12, 3, 1)
 
 	parent.PackEnd(grid, true, true, 10)
 }
@@ -357,12 +385,30 @@ func addMovingButtonActions(win *gtk.ApplicationWindow) {
 		KEY_DOWN:  func() { game.dropDown() },
 	}
 
+	chanKey := make(chan uint, 1)
+
 	win.Connect(SIGNAL_KEY_PRESS_EVENT, func(win *gtk.ApplicationWindow, ev *gdk.Event) {
+		// Discard if chanKey not empty
+		if len(chanKey) > 0 {
+			return
+		}
 		keyEvent := &gdk.EventKey{ev}
-		if action, found := keyMap[keyEvent.KeyVal()]; found {
-			action()
+		keyVal := keyEvent.KeyVal()
+		if _, found := keyMap[keyVal]; found {
+			chanKey <- keyVal
 		}
 	})
+
+	go func() {
+		for {
+			k := <-chanKey
+			if action, found := keyMap[k]; found {
+				action()
+			}
+			// To avoid too frequently key events
+			time.Sleep(time.Millisecond * 200)
+		}
+	}()
 
 	addActionTo(win, simpleActionName4Win(ACTION_ROTATE), keyMap[KEY_UP])
 	addActionTo(win, simpleActionName4Win(ACTION_LEFT), keyMap[KEY_LEFT])

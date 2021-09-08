@@ -1,4 +1,4 @@
-module tetris
+module github.com/cloudecho/tetris
 
 go 1.16
 

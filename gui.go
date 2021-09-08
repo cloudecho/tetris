@@ -38,16 +38,16 @@ const (
 	LABEL_RESUME    = "Resume"
 	LABEL_STARTGAME = "Start Game"
 
-	LABEL_GAMEOVER = "GAME OVER"
-	LABEL_SCORE    = "SCORE"
+	LABEL_SCORE = "SCORE"
 
 	UNIT_SIZE = 32
 	SPAN_SIZE = UNIT_SIZE - 2
 )
 
 var (
-	RGB_COLOR_GRAY = Rgb{231 / 255.0, 231 / 255.0, 231 / 255.0}
-	RGB_COLOR_BLUE = Rgb{168 / 255.0, 202 / 255.0, 1}
+	RGB_COLOR_GRAY  = Rgb{231 / 255.0, 231 / 255.0, 231 / 255.0}
+	RGB_COLOR_BLUE  = Rgb{168 / 255.0, 202 / 255.0, 1}
+	RGB_COLOR_GREEN = Rgb{132 / 255.0, 212 / 255.0, 129 / 255.0}
 
 	centralDa *gtk.DrawingArea
 	rightDa   *gtk.DrawingArea
@@ -55,13 +55,6 @@ var (
 	stateLabel *gtk.Label
 	scoreValue *gtk.Label
 	levelValue *gtk.Label
-
-	btnRotate *gtk.Button
-	btnLeft   *gtk.Button
-	btnRight  *gtk.Button
-	btnDown   *gtk.Button
-
-	game *Game
 )
 
 type Rgb [3]float64
@@ -73,8 +66,12 @@ func GUI() {
 		log.Fatal("Could not create application:", err)
 	}
 
+	// Initialize game
+	game := NewGame()
+	go showGame(game)
+
 	application.Connect(SIGNAL_ACTIVATE, func() {
-		win := newWindow(application)
+		win := newWindow(application, game)
 
 		aQuit := glib.SimpleActionNew("quit", nil)
 		aQuit.Connect(SIGNAL_ACTIVATE, func() {
@@ -85,10 +82,6 @@ func GUI() {
 		win.ShowAll()
 	})
 
-	// Initialize game
-	game = NewGame()
-	go showGame(game)
-
 	os.Exit(application.Run(os.Args))
 }
 
@@ -96,17 +89,17 @@ func showGame(g *Game) {
 	for {
 		select {
 		case pos := <-g.chanPos:
-			showCurrentShape(pos)
+			showCurrentShape(pos, g)
 		case <-g.chanNexts:
-			showNextShape()
+			showNextShape(g)
 		case state := <-g.chanState:
 			switch state {
 			case SATE_GAMEOVER:
-				log.Println(LABEL_GAMEOVER)
-				stateLabel.SetLabel(LABEL_GAMEOVER)
+				stateLabel.SetLabel("GAME OVER")
 			case STATE_GAMING:
-				log.Println("Start to game.")
 				stateLabel.SetLabel("")
+			case STATE_PAUSED:
+				stateLabel.SetLabel("PAUSED")
 			case STATE_ZERO:
 				// reset gui
 				resetGui()
@@ -115,38 +108,91 @@ func showGame(g *Game) {
 			levelValue.SetMarkup(markup("#000", UNIT_SIZE, strconv.Itoa(int(level))))
 		case score := <-g.chanScore:
 			scoreValue.SetMarkup(markup("#000", UNIT_SIZE, strconv.FormatUint(score, 10)))
+		case area := <-g.chanRedraw:
+			redrawArea(area, centralDa, g)
+		case row := <-g.chanHiligh:
+			drawHiligh(row, centralDa)
 		}
 	}
 }
 
 func resetGui() {
-	drawBackgroud(centralDa, ROW, COL)
+	fillBackgroud(centralDa, ROW, COL)
 	centralDa.QueueDraw()
 }
 
-func showCurrentShape(pos Point) {
-	shape := game.currShape
+// Redraw area (top~otop rows)
+func redrawArea(area Point, da *gtk.DrawingArea, g *Game) {
+	m := &g.model
+	da.Connect(SIGNAL_DRAW, func(da *gtk.DrawingArea, cr *cairo.Context) {
+		for i := area.top; i <= area.otop; i++ { // top
+			for j := 0; j < COL; j++ { // left
+				rgb := rgb(m[i][j])
+				cr.SetSourceRGB(rgb[0], rgb[1], rgb[2])
+				cr.Rectangle(float64(j*UNIT_SIZE), float64(i*UNIT_SIZE), SPAN_SIZE, SPAN_SIZE)
+				cr.Fill()
+			}
+		}
+	})
+	y := area.top * UNIT_SIZE
+	w := COL * UNIT_SIZE
+	h := (area.otop - area.top + 1) * UNIT_SIZE
+	da.QueueDrawArea(0, y, w, h)
+}
+
+func drawHiligh(row int, da *gtk.DrawingArea) {
+	for i := 0; i < 3; i++ {
+		_drawHiligh(row, da, RGB_COLOR_GRAY)
+		time.Sleep(time.Millisecond * 100)
+		_drawHiligh(row, da, RGB_COLOR_GREEN)
+		time.Sleep(time.Millisecond * 100)
+	}
+}
+
+func _drawHiligh(row int, da *gtk.DrawingArea, color Rgb) {
+	y := row * UNIT_SIZE
+	da.Connect(SIGNAL_DRAW, func(da *gtk.DrawingArea, cr *cairo.Context) {
+		cr.SetSourceRGB(color[0], color[1], color[2])
+		for j := 0; j < COL; j++ { // left
+			cr.Rectangle(float64(j*UNIT_SIZE), float64(y), SPAN_SIZE, SPAN_SIZE)
+		}
+		cr.Fill()
+	})
+	w := COL * UNIT_SIZE
+	h := UNIT_SIZE
+	da.QueueDrawArea(0, y, w, h)
+}
+
+func rgb(v uint8) Rgb {
+	if v > 0 {
+		return RGB_COLOR_BLUE
+	}
+	return RGB_COLOR_GRAY
+}
+
+func showCurrentShape(pos Point, g *Game) {
+	shape := g.currShape
 
 	// Hide the old shape
 	opos := Point{left: pos.oleft, top: pos.otop}
-	showShape(opos, shape, RGB_COLOR_GRAY, true, centralDa)
+	drawShape(opos, shape, RGB_COLOR_GRAY, true, centralDa, g)
 
 	// Show the current shape
-	showShape(pos, shape, RGB_COLOR_BLUE, false, centralDa)
+	drawShape(pos, shape, RGB_COLOR_BLUE, false, centralDa, g)
 }
 
-func showNextShape() {
-	shape := game.nextShape
+func showNextShape(g *Game) {
+	shape := g.nextShape
 
 	// Hide the old shape
 	pos := Point{left: 0, top: 0}
-	showShape(pos, shape, RGB_COLOR_GRAY, true, rightDa)
+	drawShape(pos, shape, RGB_COLOR_GRAY, true, rightDa, g)
 
 	// Show the current shape
-	showShape(pos, shape, RGB_COLOR_BLUE, false, rightDa)
+	drawShape(pos, shape, RGB_COLOR_BLUE, false, rightDa, g)
 }
 
-func showShape(pos Point, shape *Shape, rgb Rgb, erase bool, da *gtk.DrawingArea) {
+func drawShape(pos Point, shape *Shape, rgb Rgb, erase bool, da *gtk.DrawingArea, g *Game) {
 	if pos.top < 0 {
 		return
 	}
@@ -157,7 +203,7 @@ func showShape(pos Point, shape *Shape, rgb Rgb, erase bool, da *gtk.DrawingArea
 		for i := 0; i < SHAPE_SIZE; i++ { // left
 			for j := 0; j < SHAPE_SIZE; j++ { // top
 				if !checkOutOfBounds(pos.left+i, pos.top+j) &&
-					(erase && game.model[pos.top+j][pos.left+i] == 0 || shape.data[j][i] > 0) {
+					(erase && g.model[pos.top+j][pos.left+i] == 0 || shape.data[j][i] > 0) {
 					cr.Rectangle(
 						float64(pos.left+i)*UNIT_SIZE,
 						float64(pos.top+j)*UNIT_SIZE,
@@ -175,20 +221,20 @@ func showShape(pos Point, shape *Shape, rgb Rgb, erase bool, da *gtk.DrawingArea
 	da.QueueDrawArea(x, y, w, w)
 }
 
-func newWindow(application *gtk.Application) *gtk.ApplicationWindow {
+func newWindow(application *gtk.Application, g *Game) *gtk.ApplicationWindow {
 	win, err := gtk.ApplicationWindowNew(application)
 	if err != nil {
 		log.Fatal("Unable to create window:", err)
 	}
 
 	win.SetTitle("TETRIS")
-	initTitleBar(win)
+	initTitleBar(win, g)
 
 	// Centrol & Right panels
 	box, _ := gtk.BoxNew(gtk.ORIENTATION_HORIZONTAL, 10)
 	initCentralPanel(box)
 	initRightPanel(box)
-	addMovingButtonActions(win)
+	addMovingButtonActions(win, g)
 
 	// Assemble the window
 	win.Add(box)
@@ -197,7 +243,7 @@ func newWindow(application *gtk.Application) *gtk.ApplicationWindow {
 	return win
 }
 
-func initTitleBar(win *gtk.ApplicationWindow) {
+func initTitleBar(win *gtk.ApplicationWindow, g *Game) {
 	// Create a header bar
 	header, err := gtk.HeaderBarNew()
 	if err != nil {
@@ -240,7 +286,7 @@ func initTitleBar(win *gtk.ApplicationWindow) {
 	buttonBox.Add(btnPause)
 	header.PackEnd(buttonBox)
 
-	addTitleButtonActions(win, btnPause)
+	addTitleButtonActions(win, btnPause, g)
 	win.SetTitlebar(header)
 }
 
@@ -259,21 +305,21 @@ func btnStart() *gtk.Button {
 	return btn
 }
 
-func addTitleButtonActions(win *gtk.ApplicationWindow, btnPause *gtk.Button) {
+func addTitleButtonActions(win *gtk.ApplicationWindow, btnPause *gtk.Button, g *Game) {
 	addActionTo(win, simpleActionName4Win(ACTION_NEWGAME), func() {
-		game.start()
+		g.start()
 	})
 
 	addActionTo(win, simpleActionName4Win(ACTION_PAUSE), func() {
 		btnPause.SetLabel(LABEL_RESUME)
 		btnPause.SetActionName(ACTION_RESUME)
-		log.Println("TODO PAUSE!")
+		g.pause()
 	})
 
 	addActionTo(win, simpleActionName4Win(ACTION_RESUME), func() {
 		btnPause.SetLabel(LABEL_PAUSE)
 		btnPause.SetActionName(ACTION_PAUSE)
-		log.Println("TODO RESUME!")
+		g.resume()
 	})
 }
 
@@ -289,14 +335,14 @@ func addActionTo(
 
 func initCentralPanel(parent *gtk.Box) {
 	da, _ := gtk.DrawingAreaNew()
-	drawBackgroud(da, ROW, COL)
+	fillBackgroud(da, ROW, COL)
 	da.SetSizeRequest(COL*UNIT_SIZE, (ROW+1)*UNIT_SIZE)
 	centralDa = da
 
 	parent.PackStart(da, true, true, 10)
 }
 
-func drawBackgroud(da *gtk.DrawingArea, row, col int) {
+func fillBackgroud(da *gtk.DrawingArea, row, col int) {
 	da.Connect(SIGNAL_DRAW, func(da *gtk.DrawingArea, cr *cairo.Context) {
 		cr.SetSourceRGB(RGB_COLOR_GRAY[0], RGB_COLOR_GRAY[1], RGB_COLOR_GRAY[2])
 		for i := 0; i < row; i++ {
@@ -310,10 +356,10 @@ func drawBackgroud(da *gtk.DrawingArea, row, col int) {
 
 func initRightPanel(parent *gtk.Box) {
 	initValueLabels()
-	initMovingButtons()
+	btnRotate, btnLeft, btnRight, btnDown := initMovingButtons()
 
 	da, _ := gtk.DrawingAreaNew()
-	drawBackgroud(da, SHAPE_SIZE, SHAPE_SIZE)
+	fillBackgroud(da, SHAPE_SIZE, SHAPE_SIZE)
 	da.SetSizeRequest(SHAPE_SIZE*UNIT_SIZE, SHAPE_SIZE*UNIT_SIZE)
 	da.SetMarginTop(UNIT_SIZE)
 	rightDa = da
@@ -365,24 +411,26 @@ func initValueLabels() {
 	levelValue, _ = gtk.LabelNew("")
 }
 
-func initMovingButtons() {
-	btnRotate, _ = gtk.ButtonNewWithLabel("^")
-	btnLeft, _ = gtk.ButtonNewWithLabel("<")
-	btnRight, _ = gtk.ButtonNewWithLabel(">")
-	btnDown, _ = gtk.ButtonNewWithLabel("v")
+func initMovingButtons() (*gtk.Button, *gtk.Button, *gtk.Button, *gtk.Button) {
+	btnRotate, _ := gtk.ButtonNewWithLabel("^")
+	btnLeft, _ := gtk.ButtonNewWithLabel("<")
+	btnRight, _ := gtk.ButtonNewWithLabel(">")
+	btnDown, _ := gtk.ButtonNewWithLabel("v")
 
 	btnRotate.SetActionName(ACTION_ROTATE)
 	btnLeft.SetActionName(ACTION_LEFT)
 	btnRight.SetActionName(ACTION_RIGHT)
 	btnDown.SetActionName(ACTION_DOWN)
+
+	return btnRotate, btnLeft, btnRight, btnDown
 }
 
-func addMovingButtonActions(win *gtk.ApplicationWindow) {
+func addMovingButtonActions(win *gtk.ApplicationWindow, g *Game) {
 	keyMap := map[uint]func(){
-		KEY_LEFT:  func() { game.moveLeft() },
-		KEY_UP:    func() { game.rotate() },
-		KEY_RIGHT: func() { game.moveRight() },
-		KEY_DOWN:  func() { game.dropDown() },
+		KEY_LEFT:  func() { g.moveLeft() },
+		KEY_UP:    func() { g.rotate() },
+		KEY_RIGHT: func() { g.moveRight() },
+		KEY_DOWN:  func() { g.dropDown() },
 	}
 
 	chanKey := make(chan uint, 1)

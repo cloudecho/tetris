@@ -2,7 +2,7 @@ package tetris
 
 import (
 	"errors"
-	"fmt"
+	"log"
 	"sync"
 	"time"
 )
@@ -82,40 +82,49 @@ type Game struct {
 	score uint64
 	rows  uint
 
-	chanPos   chan Point  // position chan
-	chanLevel chan uint8  // level chan
-	chanScore chan uint64 // score chan
-	chanState chan int32  // state chan
-	chanNexts chan bool   // show next shape
+	chanPos    chan Point  // position chan
+	chanRedraw chan Point  // redraw area chan
+	chanHiligh chan int    // highlight row chan
+	chanLevel  chan uint8  // level chan
+	chanScore  chan uint64 // score chan
+	chanState  chan int32  // state chan
+	chanNexts  chan bool   // show next shape
 
-	m sync.Mutex
+	m          sync.Mutex
+	resumeCond *sync.Cond
 }
 
 func NewGame() *Game {
-	return &Game{
-		state:     STATE_ZERO,
-		currShape: randShape(),
-		nextShape: randShape(),
-		pos:       landingPoint(),
-		level:     0,
-		score:     0,
-		rows:      0,
-		chanPos:   make(chan Point),
-		chanLevel: make(chan uint8),
-		chanScore: make(chan uint64),
-		chanState: make(chan int32),
-		chanNexts: make(chan bool),
+	g := &Game{
+		state:      STATE_ZERO,
+		currShape:  randShape(),
+		nextShape:  randShape(),
+		pos:        landingPoint(),
+		level:      0,
+		score:      0,
+		rows:       0,
+		chanPos:    make(chan Point),
+		chanRedraw: make(chan Point),
+		chanHiligh: make(chan int),
+		chanLevel:  make(chan uint8),
+		chanScore:  make(chan uint64),
+		chanState:  make(chan int32),
+		chanNexts:  make(chan bool),
 	}
+	g.resumeCond = sync.NewCond(&g.m)
+	return g
 }
 
 func (g *Game) reset() {
+	log.Println("reset game status")
+
 	for i := 0; i < ROW; i++ {
 		for j := 0; j < COL; j++ {
 			g.model[i][j] = 0
 		}
 	}
 
-	g.state = STATE_ZERO	
+	g.state = STATE_ZERO
 	g.currShape = randShape()
 	g.nextShape = randShape()
 	g.pos = landingPoint()
@@ -124,13 +133,16 @@ func (g *Game) reset() {
 	g.rows = 0
 }
 
-func (g *Game) start() error {
+func (g *Game) start() {
 	g.m.Lock()
 	defer g.m.Unlock()
 
 	if g.state > SATE_GAMEOVER {
-		return fmt.Errorf("could not start as current state is: %d", g.state)
+		log.Printf("could not start as current state is %d", g.state)
+		return
 	}
+
+	log.Println("start to game")
 
 	if g.state > STATE_ZERO {
 		g.reset()
@@ -143,7 +155,6 @@ func (g *Game) start() error {
 	g.chanLevel <- g.level
 	changeState(STATE_GAMING, g)
 	go startGame(g)
-	return nil
 }
 
 func startGame(g *Game) {
@@ -151,6 +162,14 @@ func startGame(g *Game) {
 
 	for continueGame(g) {
 		time.Sleep(speed(g))
+
+		// check if paused
+		g.m.Lock()
+		for STATE_PAUSED == g.state {
+			log.Println("wait to continue")
+			g.resumeCond.Wait()
+		}
+		g.m.Unlock()
 	}
 }
 
@@ -208,20 +227,25 @@ func updateModel(g *Game) {
 
 func promote(g *Game) {
 	p := g.pos
-	m := g.model
+	m := &g.model
 
-	// TODO erase promoted rows
+	// erase promoted rows
 	n := 0
-	for i := p.top; i < ROW; i++ { // top
-		b := true
+	top := p.top
+	for i := ROW - 1; i >= top; i-- { // top
+		k := i
 		for j := 0; j < COL; j++ { // left
 			if m[i][j] == 0 {
-				b = false
+				k = -1
 				break
 			}
 		}
-		if b {
+		// erase k-th row
+		if k > 0 {
+			hilighRow(k, g)
+			eraseRow(k, g)
 			n++
+			top++
 		}
 	}
 
@@ -230,16 +254,58 @@ func promote(g *Game) {
 	}
 
 	// compute rows & score
-	g.rows = g.rows + uint(n)
-	g.score = g.score + uint64(scoreTable[n-1])
+	newScore := uint64(scoreTable[n-1])
+	g.rows += uint(n)
+	g.score += newScore
 	g.chanScore <- g.score
+	log.Printf("[promote] rows=%d(+%d) score=%d(+%d)", g.rows, n, g.score, newScore)
 
 	// compute level
 	l := uint8(g.rows / ROW)
 	if l < LEVELS && l > g.level {
+		log.Printf("[promote] level %d -> %d", g.level, l)
 		g.level = l
 		g.chanLevel <- l
 	}
+}
+
+func hilighRow(k int, g *Game) {
+	g.chanHiligh <- k
+}
+
+// Erase k-th row of g.model
+func eraseRow(k int, g *Game) {
+	m := &g.model
+	top := waterLevel(g)
+	for i := k; i > top; i-- {
+		m[k] = m[k-1]
+	}
+	for j := 0; j < COL; j++ {
+		m[top][j] = 0
+	}
+
+	// notify gui to redraw the area(top~k rows)
+	area := Point{top: top, otop: k}
+	g.chanRedraw <- area
+}
+
+func waterLevel(g *Game) int {
+	m := &g.model
+	for i := ROW - 1; i > 0; i-- {
+		k := i
+		for j := 0; j < COL; j++ {
+			if m[i][j] > 0 {
+				k = 0
+				break
+			}
+		}
+		if k > 0 {
+			// all the elements of m[k] are 0
+			// so the water level is k+1
+			return k + 1
+		}
+	}
+	return 0
 }
 
 // Returns an int value in miliseconds
@@ -260,12 +326,25 @@ func (g *Game) pause() {
 	g.m.Lock()
 	defer g.m.Unlock()
 
+	if g.state != STATE_GAMING {
+		log.Printf("could not pause as current state is %d", g.state)
+		return
+	}
+	changeState(STATE_PAUSED, g)
+	log.Println("game paused")
 }
 
 func (g *Game) resume() {
 	g.m.Lock()
 	defer g.m.Unlock()
 
+	if g.state != STATE_PAUSED {
+		log.Printf("could not resume as current state is %d", g.state)
+		return
+	}
+	changeState(STATE_GAMING, g)
+	g.resumeCond.Signal()
+	log.Println("game resumed")
 }
 
 func (g *Game) rotate() {
@@ -336,7 +415,7 @@ func checkRotateConflict(shape *Shape, pos Point, g *Game) bool {
 func conflictWithModel(pos Point, shape *Shape, g *Game) bool {
 	b := shape.bounds()
 	d := shape.data
-	m := g.model
+	m := &g.model
 	for i := b.x; i <= b.x2; i++ {
 		for j := b.y; j <= b.y2; j++ {
 			if m[pos.top+j][pos.left+i]&d[j][i] > 0 {

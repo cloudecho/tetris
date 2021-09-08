@@ -1,6 +1,6 @@
 package main
 
-import "tetris"
+import "github.com/cloudecho/tetris"
 
 func main(){
 	tetris.GUI()

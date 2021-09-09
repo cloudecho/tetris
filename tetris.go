@@ -194,9 +194,10 @@ func continueGame(g *Game) bool {
 	promote(g)
 
 	g.pos = landingPoint()
-	g.pos.sendTo(g.chanPos)
 	g.currShape = g.nextShape
 	g.nextShape = randShape()
+
+	g.pos.sendTo(g.chanPos)
 	g.chanNexts <- true
 
 	return true

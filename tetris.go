@@ -257,7 +257,7 @@ func promote(g *Game) {
 	}
 
 	// compute rows & score
-	newScore := uint64(scoreTable[n-1])
+	newScore := uint64(earnScore(n, g.level))
 	g.rows += uint(n)
 	g.score += newScore
 	g.chanScore <- g.score
@@ -270,6 +270,10 @@ func promote(g *Game) {
 		g.level = l
 		g.chanLevel <- l
 	}
+}
+
+func earnScore(n int, level uint8) int {
+	return scoreTable[n-1] + 100*int(level)
 }
 
 func hilighRow(k int, g *Game) {

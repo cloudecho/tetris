@@ -247,6 +247,7 @@ func promote(g *Game) {
 			eraseRow(k, g)
 			n++
 			top++
+			i++
 		}
 	}
 

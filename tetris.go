@@ -142,8 +142,6 @@ func (g *Game) start() {
 		return
 	}
 
-	log.Println("start to game")
-
 	if g.state > STATE_ZERO {
 		g.reset()
 		g.chanState <- STATE_ZERO
@@ -158,6 +156,7 @@ func (g *Game) start() {
 }
 
 func startGame(g *Game) {
+	log.Println("start to game")
 	time.Sleep(time.Second)
 
 	for continueGame(g) {
@@ -171,6 +170,8 @@ func startGame(g *Game) {
 		}
 		g.m.Unlock()
 	}
+
+	log.Println("game over")
 }
 
 func continueGame(g *Game) bool {

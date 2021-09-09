@@ -134,10 +134,7 @@ func redrawArea(area Point, da *gtk.DrawingArea, g *Game) {
 			}
 		}
 	})
-	y := area.top * UNIT_SIZE
-	w := COL * UNIT_SIZE
-	h := (area.otop - area.top + 1) * UNIT_SIZE
-	da.QueueDrawArea(0, y, w, h)
+	da.QueueDraw()
 }
 
 func drawHiligh(row int, da *gtk.DrawingArea) {
@@ -158,9 +155,7 @@ func _drawHiligh(row int, da *gtk.DrawingArea, color Rgb) {
 		}
 		cr.Fill()
 	})
-	w := COL * UNIT_SIZE
-	h := UNIT_SIZE
-	da.QueueDrawArea(0, y, w, h)
+	da.QueueDraw()
 }
 
 func rgb(v uint8) Rgb {
@@ -215,10 +210,7 @@ func drawShape(pos Point, shape *Shape, rgb Rgb, erase bool, da *gtk.DrawingArea
 		cr.Fill()
 	})
 
-	x := pos.left * UNIT_SIZE
-	y := pos.top * UNIT_SIZE
-	w := SHAPE_SIZE * UNIT_SIZE
-	da.QueueDrawArea(x, y, w, w)
+	da.QueueDraw()
 }
 
 func newWindow(application *gtk.Application, g *Game) *gtk.ApplicationWindow {

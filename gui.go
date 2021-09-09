@@ -203,7 +203,7 @@ func drawShape(pos Point, shape *Shape, rgb Rgb, erase bool, da *gtk.DrawingArea
 		for i := 0; i < SHAPE_SIZE; i++ { // left
 			for j := 0; j < SHAPE_SIZE; j++ { // top
 				if !checkOutOfBounds(pos.left+i, pos.top+j) &&
-					(erase && g.model[pos.top+j][pos.left+i] == 0 || shape.data[j][i] > 0) {
+					(erase && g.model[pos.top+j][pos.left+i] == 0 || (!erase && shape.data[j][i] > 0)) {
 					cr.Rectangle(
 						float64(pos.left+i)*UNIT_SIZE,
 						float64(pos.top+j)*UNIT_SIZE,

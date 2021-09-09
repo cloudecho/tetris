@@ -278,11 +278,8 @@ func hilighRow(k int, g *Game) {
 func eraseRow(k int, g *Game) {
 	m := &g.model
 	top := waterLevel(g)
-	for i := k; i > top; i-- {
-		m[k] = m[k-1]
-	}
-	for j := 0; j < COL; j++ {
-		m[top][j] = 0
+	for i := k; i >= top && i > 1; i-- {
+		m[i] = m[i-1]
 	}
 
 	// notify gui to redraw the area(top~k rows)

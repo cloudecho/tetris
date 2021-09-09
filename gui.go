@@ -180,7 +180,7 @@ func showNextShape(g *Game) {
 	shape := g.nextShape
 
 	// Hide the old shape
-	pos := Point{left: 0, top: 0}
+	pos := Point{left: 0, top: 0, otop: -2}
 	drawShape(pos, shape, RGB_COLOR_GRAY, true, rightDa, g)
 
 	// Show the current shape
@@ -198,7 +198,8 @@ func drawShape(pos Point, shape *Shape, rgb Rgb, erase bool, da *gtk.DrawingArea
 		for i := 0; i < SHAPE_SIZE; i++ { // left
 			for j := 0; j < SHAPE_SIZE; j++ { // top
 				if !checkOutOfBounds(pos.left+i, pos.top+j) &&
-					(erase && g.model[pos.top+j][pos.left+i] == 0 || (!erase && shape.data[j][i] > 0)) {
+					(erase && (pos.otop <= -2 || g.model[pos.top+j][pos.left+i] == 0) ||
+						!erase && shape.data[j][i] > 0) {
 					cr.Rectangle(
 						float64(pos.left+i)*UNIT_SIZE,
 						float64(pos.top+j)*UNIT_SIZE,

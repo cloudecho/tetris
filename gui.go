@@ -188,10 +188,6 @@ func showNextShape(g *Game) {
 }
 
 func drawShape(pos Point, shape *Shape, rgb Rgb, erase bool, da *gtk.DrawingArea, g *Game) {
-	if pos.top < 0 {
-		return
-	}
-
 	// Show the current shape
 	da.Connect(SIGNAL_DRAW, func(da *gtk.DrawingArea, cr *cairo.Context) {
 		cr.SetSourceRGB(rgb[0], rgb[1], rgb[2])

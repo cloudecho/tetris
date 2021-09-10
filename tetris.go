@@ -99,7 +99,6 @@ func NewGame() *Game {
 		state:      STATE_ZERO,
 		currShape:  randShape(),
 		nextShape:  randShape(),
-		pos:        landingPoint(),
 		level:      0,
 		score:      0,
 		rows:       0,
@@ -111,6 +110,7 @@ func NewGame() *Game {
 		chanState:  make(chan int32),
 		chanNexts:  make(chan bool),
 	}
+	g.pos = landingPoint(g.currShape)
 	g.resumeCond = sync.NewCond(&g.m)
 	return g
 }
@@ -127,7 +127,7 @@ func (g *Game) reset() {
 	g.state = STATE_ZERO
 	g.currShape = randShape()
 	g.nextShape = randShape()
-	g.pos = landingPoint()
+	g.pos = landingPoint(g.currShape)
 	g.level = 0
 	g.score = 0
 	g.rows = 0
@@ -193,9 +193,9 @@ func continueGame(g *Game) bool {
 	updateModel(g)
 	promote(g)
 
-	g.pos = landingPoint()
 	g.currShape = g.nextShape
 	g.nextShape = randShape()
+	g.pos = landingPoint(g.currShape)
 
 	g.pos.sendTo(g.chanPos)
 	g.chanNexts <- true
@@ -317,10 +317,10 @@ func speed(g *Game) time.Duration {
 	return time.Duration(speedTable[g.level]) * time.Millisecond
 }
 
-func landingPoint() Point {
+func landingPoint(s *Shape) Point {
 	return Point{
 		left:  (COL-SHAPE_SIZE)/2 + 1,
-		top:   0,
+		top:   -s.bounds().y,
 		oleft: -1,
 		otop:  -1,
 	}

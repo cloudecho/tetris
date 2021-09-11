@@ -194,7 +194,7 @@ func drawShape(pos Point, shape *Shape, rgb Rgb, erase bool, da *gtk.DrawingArea
 		cr.SetSourceRGB(rgb[0], rgb[1], rgb[2])
 		for i := 0; i < SHAPE_SIZE; i++ { // left
 			for j := 0; j < SHAPE_SIZE; j++ { // top
-				if !checkOutOfBounds(pos.left+i, pos.top+j) &&
+				if !isOutOfBounds(pos.left+i, pos.top+j) &&
 					(erase && (pos.otop <= -2 || g.model[pos.top+j][pos.left+i] == 0) ||
 						!erase && shape.data[j][i] > 0) {
 					cr.Rectangle(

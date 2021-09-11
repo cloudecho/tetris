@@ -186,7 +186,7 @@ func continueGame(g *Game) bool {
 	defer g.m.Unlock()
 
 	pos, err := g.pos.moveDown()
-	if !checkConflict(err, pos, g) {
+	if !isConflict(err, pos, g) {
 		changePosition(pos, g)
 		return true
 	}
@@ -371,7 +371,7 @@ func (g *Game) moveLeft() {
 	defer g.m.Unlock()
 
 	pos, err := g.pos.moveLeft()
-	if checkConflict(err, pos, g) {
+	if isConflict(err, pos, g) {
 		return
 	}
 	changePosition(pos, g)
@@ -382,7 +382,7 @@ func (g *Game) moveRight() {
 	defer g.m.Unlock()
 
 	pos, err := g.pos.moveRight()
-	if checkConflict(err, pos, g) {
+	if isConflict(err, pos, g) {
 		return
 	}
 	changePosition(pos, g)
@@ -412,7 +412,7 @@ func (g *Game) dropDown() {
 }
 
 // Return true if conflict
-func checkConflict(err error, pos Point, g *Game) bool {
+func isConflict(err error, pos Point, g *Game) bool {
 	return err != nil ||
 		shapeOutOfBounds(pos, g.currShape) ||
 		conflictWithModel(pos, g.currShape, g)
@@ -439,10 +439,10 @@ func conflictWithModel(pos Point, shape *Shape, g *Game) bool {
 
 func shapeOutOfBounds(pos Point, shape *Shape) bool {
 	b := shape.bounds()
-	return checkOutOfBounds(pos.left+b.x, pos.top+b.y) ||
-		checkOutOfBounds(pos.left+b.x2, pos.top+b.y2)
+	return isOutOfBounds(pos.left+b.x, pos.top+b.y) ||
+		isOutOfBounds(pos.left+b.x2, pos.top+b.y2)
 }
 
-func checkOutOfBounds(left, top int) bool {
+func isOutOfBounds(left, top int) bool {
 	return top > ROW-1 || left > COL-1 || top < 0 || left < 0
 }

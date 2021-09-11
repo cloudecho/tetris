@@ -365,9 +365,9 @@ func initRightPanel(parent *gtk.Box) {
 	scoreValue.SetMarkup(markup("#000", UNIT_SIZE, "0"))
 	levelLabel.SetMarkup(markup("#000", UNIT_SIZE, "LEVEL"))
 	levelValue.SetMarkup(markup("#000", UNIT_SIZE, "0"))
-	separator1.SetMarkup(markup("#000", 4*UNIT_SIZE, " "))
-	separator2.SetMarkup(markup("#000", UNIT_SIZE, " "))
-	separator3.SetMarkup(markup("#000", UNIT_SIZE, " "))
+	separator1.SetMarkup(markup("#000", UNIT_SIZE, " "))
+	separator2.SetMarkup(markup("#000", UNIT_SIZE/2, " "))
+	separator3.SetMarkup(markup("#000", UNIT_SIZE/2, " "))
 	separator4.SetMarkup(markup("#000", UNIT_SIZE/2, " "))
 
 	grid, _ := gtk.GridNew()
@@ -443,7 +443,7 @@ func addMovingButtonActions(win *gtk.ApplicationWindow, g *Game) {
 				action()
 			}
 			// To avoid too frequently key events
-			time.Sleep(time.Millisecond * 200)
+			time.Sleep(time.Millisecond * 100)
 		}
 	}()
 

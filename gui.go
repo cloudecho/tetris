@@ -80,6 +80,7 @@ func GUI() {
 		application.AddAction(aQuit)
 
 		win.ShowAll()
+		game.start()
 	})
 
 	os.Exit(application.Run(os.Args))
@@ -414,6 +415,8 @@ func initMovingButtons() (*gtk.Button, *gtk.Button, *gtk.Button, *gtk.Button) {
 	return btnRotate, btnLeft, btnRight, btnDown
 }
 
+var chanKey chan uint = make(chan uint, 1)
+
 func addMovingButtonActions(win *gtk.ApplicationWindow, g *Game) {
 	keyMap := map[uint]func(){
 		KEY_LEFT:  func() { g.moveLeft() },
@@ -421,8 +424,6 @@ func addMovingButtonActions(win *gtk.ApplicationWindow, g *Game) {
 		KEY_RIGHT: func() { g.moveRight() },
 		KEY_DOWN:  func() { g.dropDown() },
 	}
-
-	chanKey := make(chan uint, 1)
 
 	win.Connect(SIGNAL_KEY_PRESS_EVENT, func(win *gtk.ApplicationWindow, ev *gdk.Event) {
 		// Discard if chanKey not empty

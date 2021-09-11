@@ -35,7 +35,11 @@ type Point struct {
 	otop  int // old top
 }
 
-var InvalidPoint = Point{-1, -1, -1, -1}
+var InvalidPoint = Point{-SHAPE_SIZE, -SHAPE_SIZE, -SHAPE_SIZE, -SHAPE_SIZE}
+
+func (p *Point) isValid() bool {
+	return p.left > InvalidPoint.left && p.top > InvalidPoint.top
+}
 
 func (p Point) moveLeft() (Point, error) {
 	if p.left+SHAPE_SIZE-2 < 0 {
@@ -77,10 +81,11 @@ type Game struct {
 	currShape *Shape
 	nextShape *Shape
 
-	pos   Point // position of current shape
-	level uint8 // starts from 0
-	score uint64
-	rows  uint
+	pos        Point // position of current shape
+	level      uint8 // starts from 0
+	score      uint64
+	rows       uint
+	waterLevel int
 
 	chanPos    chan Point  // position chan
 	chanRedraw chan Point  // redraw area chan
@@ -100,6 +105,7 @@ func NewGame() *Game {
 		currShape:  randShape(),
 		nextShape:  randShape(),
 		level:      0,
+		waterLevel: ROW,
 		score:      0,
 		rows:       0,
 		chanPos:    make(chan Point),
@@ -129,6 +135,7 @@ func (g *Game) reset() {
 	g.nextShape = randShape()
 	g.pos = landingPoint(g.currShape)
 	g.level = 0
+	g.waterLevel = ROW
 	g.score = 0
 	g.rows = 0
 }
@@ -190,6 +197,7 @@ func continueGame(g *Game) bool {
 		return false
 	}
 
+	updateWaterLevel(g)
 	updateModel(g)
 	promote(g)
 
@@ -211,6 +219,13 @@ func changeState(state int32, g *Game) {
 func changePosition(pos Point, g *Game) {
 	g.pos = pos
 	pos.sendTo(g.chanPos)
+}
+
+func updateWaterLevel(g *Game) {
+	k := g.pos.top + g.currShape.bounds().y
+	if g.waterLevel > k {
+		g.waterLevel = k
+	}
 }
 
 func updateModel(g *Game) {
@@ -283,33 +298,15 @@ func hilighRow(k int, g *Game) {
 // Erase k-th row of g.model
 func eraseRow(k int, g *Game) {
 	m := &g.model
-	top := waterLevel(g)
+	top := g.waterLevel
 	for i := k; i >= top && i > 1; i-- {
 		m[i] = m[i-1]
 	}
+	g.waterLevel++
 
 	// notify gui to redraw the area(top~k rows)
 	area := Point{top: top, otop: k}
 	g.chanRedraw <- area
-}
-
-func waterLevel(g *Game) int {
-	m := &g.model
-	for i := ROW - 1; i > 0; i-- {
-		k := i
-		for j := 0; j < COL; j++ {
-			if m[i][j] > 0 {
-				k = 0
-				break
-			}
-		}
-		if k > 0 {
-			// all the elements of m[k] are 0
-			// so the water level is k+1
-			return k + 1
-		}
-	}
-	return 0
 }
 
 // Returns an int value in miliseconds
@@ -395,12 +392,22 @@ func (g *Game) dropDown() {
 	g.m.Lock()
 	defer g.m.Unlock()
 
-	for pos, err := g.pos.moveDown(); ; {
+	oldPos := g.pos
+	newPos := InvalidPoint
+
+	for pos, err := oldPos.moveDown(); ; {
 		if checkConflict(err, pos, g) {
 			break
 		}
-		changePosition(pos, g)
-		pos, err = g.pos.moveDown()
+		newPos = pos
+		pos, err = newPos.moveDown()
+	}
+
+	if newPos.isValid() {
+		newPos.oleft = oldPos.left
+		newPos.otop = oldPos.top
+
+		changePosition(newPos, g)
 	}
 }
 

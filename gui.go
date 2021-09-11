@@ -221,7 +221,7 @@ func newWindow(application *gtk.Application, g *Game) *gtk.ApplicationWindow {
 
 	// Centrol & Right panels
 	box, _ := gtk.BoxNew(gtk.ORIENTATION_HORIZONTAL, 10)
-	initCentralPanel(box)
+	initLeftPanel(box)
 	initRightPanel(box)
 	addMovingButtonActions(win, g)
 
@@ -322,7 +322,7 @@ func addActionTo(
 	win.AddAction(a)
 }
 
-func initCentralPanel(parent *gtk.Box) {
+func initLeftPanel(parent *gtk.Box) {
 	da, _ := gtk.DrawingAreaNew()
 	fillBackgroud(da, ROW, COL)
 	da.SetSizeRequest(COL*UNIT_SIZE, (ROW+1)*UNIT_SIZE)

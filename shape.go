@@ -1,6 +1,7 @@
 package tetris
 
 import (
+	"errors"
 	"log"
 	"math/rand"
 	"time"
@@ -353,41 +354,86 @@ var shapes = []*Shape{
 		{0, 0, 0, 0}}},
 }
 
-type shapeData [SHAPE_SIZE][SHAPE_SIZE]uint8
+type (
+	Shape struct {
+		id   int
+		next int
+		data shapeData
+	}
 
-type Shape struct {
-	id   int
-	next int
-	data shapeData
-}
+	shapeData [SHAPE_SIZE][SHAPE_SIZE]uint8
+
+	shapeBounds Area
+)
+
+var shapeBoundsMap = make(map[int]shapeBounds)
 
 func randShape() *Shape {
 	k := rand.Intn(len(shapes))
 	return shapes[k]
 }
 
-func (a *Shape) rotate() *Shape {
-	return shapes[a.next]
-}
-
-type ShapeBounds struct {
-	x  int // left
-	y  int // top
-	x2 int // left+width
-	y2 int // top+height
-}
-
-var shapeBoundsMap = make(map[int]ShapeBounds)
-
-func (a *Shape) bounds() ShapeBounds {
+func (s *Shape) bounds() shapeBounds {
 	if len(shapeBoundsMap) == 0 {
 		log.Fatalln("should init first")
 	}
-	return shapeBoundsMap[a.id]
+	return shapeBoundsMap[s.id]
 }
 
-func computeBounds(a *Shape) ShapeBounds {
-	d := a.data
+func (s *Shape) area(o Point) *Area {
+	b := s.bounds()
+	return &Area{
+		x:  o.left + b.x,
+		y:  o.top + b.y,
+		x2: o.left + b.x2,
+		y2: o.top + b.y2,
+	}
+}
+
+var ErrorMoving = errors.New("error moving")
+
+func (s *Shape) rotate(o Point) (*Shape, *Moving, error) {
+	newShape := shapes[s.next]
+	mv, err := checkMoving(newShape.area(o), o, o)
+	return newShape, mv, err
+}
+
+func (s *Shape) moveLeft(from Point) (*Moving, error) {
+	to := from // copy
+	to.left--
+	return checkMoving(s.area(to), from, to)
+}
+
+func (s *Shape) moveRight(from Point) (*Moving, error) {
+	to := from // copy
+	to.left++
+	return checkMoving(s.area(to), from, to)
+}
+
+func (s *Shape) moveDown(from Point) (*Moving, error) {
+	to := from // copy
+	to.top++
+	return checkMoving(s.area(to), from, to)
+}
+
+func checkMoving(a *Area, from, to Point) (*Moving, error) {
+	if a.outOfBounds() {
+		return nil, ErrorMoving
+	}
+	return &Moving{from, to}, nil
+}
+
+func init() {
+	rand.Seed(time.Now().UnixNano())
+
+	for id, shape := range shapes {
+		shapeBoundsMap[id] = computeBounds(shape)
+	}
+}
+
+// Shape bounds at the point of zero
+func computeBounds(a *Shape) shapeBounds {
+	d := &a.data
 	x := SHAPE_SIZE
 	y := SHAPE_SIZE
 	x2 := 0
@@ -413,13 +459,5 @@ func computeBounds(a *Shape) ShapeBounds {
 		}
 	}
 
-	return ShapeBounds{x, y, x2, y2}
-}
-
-func init() {
-	rand.Seed(time.Now().UnixNano())
-
-	for id, shape := range shapes {
-		shapeBoundsMap[id] = computeBounds(shape)
-	}
+	return shapeBounds{x, y, x2, y2}
 }

@@ -1,7 +1,6 @@
 package tetris
 
 import (
-	"errors"
 	"log"
 	"sync"
 	"time"
@@ -22,63 +21,18 @@ const (
 )
 
 var (
-	ErrorPositionOutOfBounds = errors.New("position out of bounds")
+	// score table
+	scores = [SHAPE_SIZE]int{100, 300, 500, 700}
 
-	scoreTable = [SHAPE_SIZE]int{100, 300, 500, 700}
-	speedTable = [LEVELS]int{1500, 1300, 1000, 800, 500, 300}
+	// speed table, mapping level to speed
+	speeds = [LEVELS]int{1500, 1300, 1000, 800, 500, 300}
 )
-
-type Point struct {
-	left  int
-	top   int
-	oleft int // old left
-	otop  int // old top
-}
-
-var InvalidPoint = Point{-SHAPE_SIZE, -SHAPE_SIZE, -SHAPE_SIZE, -SHAPE_SIZE}
-
-func (p *Point) isValid() bool {
-	return p.left > InvalidPoint.left && p.top > InvalidPoint.top
-}
-
-func (p Point) moveLeft() (Point, error) {
-	if p.left+SHAPE_SIZE-2 < 0 {
-		return InvalidPoint, ErrorPositionOutOfBounds
-	}
-	p.oleft = p.left
-	p.otop = p.top
-	p.left--
-	return p, nil
-}
-
-func (p Point) moveRight() (Point, error) {
-	if p.left+1 > COL-1 {
-		return InvalidPoint, ErrorPositionOutOfBounds
-	}
-	p.oleft = p.left
-	p.otop = p.top
-	p.left++
-	return p, nil
-}
-
-func (p Point) moveDown() (Point, error) {
-	if p.top+1 > ROW-1 {
-		return InvalidPoint, ErrorPositionOutOfBounds
-	}
-	p.oleft = p.left
-	p.otop = p.top
-	p.top++
-	return p, nil
-}
-
-func (p Point) sendTo(out chan<- Point) {
-	out <- p
-}
 
 type Game struct {
 	state     int32
 	model     [ROW][COL]uint8
 	currShape *Shape
+	oldShape  *Shape // for rotate
 	nextShape *Shape
 
 	pos        Point // position of current shape
@@ -87,16 +41,16 @@ type Game struct {
 	rows       uint
 	waterLevel int
 
-	chanPos    chan Point  // position chan
-	chanRedraw chan Point  // redraw area chan
-	chanHiligh chan int    // highlight row chan
-	chanLevel  chan uint8  // level chan
-	chanScore  chan uint64 // score chan
-	chanState  chan int32  // state chan
-	chanNexts  chan bool   // show next shape
+	chanMoving chan *Moving // shape moving chan
+	chanRedraw chan *Area   // redraw area chan
+	chanHiligh chan int     // highlight row chan
+	chanLevel  chan uint8   // level chan
+	chanScore  chan uint64  // score chan
+	chanState  chan int32   // state chan
+	chanNexts  chan bool    // show next shape
 
-	m          sync.Mutex
-	resumeCond *sync.Cond
+	m       sync.Mutex
+	stateOk *sync.Cond
 }
 
 func NewGame() *Game {
@@ -108,16 +62,15 @@ func NewGame() *Game {
 		waterLevel: ROW,
 		score:      0,
 		rows:       0,
-		chanPos:    make(chan Point),
-		chanRedraw: make(chan Point),
+		chanMoving: make(chan *Moving),
+		chanRedraw: make(chan *Area),
 		chanHiligh: make(chan int),
 		chanLevel:  make(chan uint8),
 		chanScore:  make(chan uint64),
 		chanState:  make(chan int32),
 		chanNexts:  make(chan bool),
 	}
-	g.pos = landingPoint(g.currShape)
-	g.resumeCond = sync.NewCond(&g.m)
+	g.stateOk = sync.NewCond(&g.m)
 	return g
 }
 
@@ -133,11 +86,20 @@ func (g *Game) reset() {
 	g.state = STATE_ZERO
 	g.currShape = randShape()
 	g.nextShape = randShape()
-	g.pos = landingPoint(g.currShape)
 	g.level = 0
 	g.waterLevel = ROW
 	g.score = 0
 	g.rows = 0
+}
+
+// init g.pos and notiy ui
+func (g *Game) landing() {
+	g.pos = Point{
+		left: (COL-SHAPE_SIZE)/2 + 1,
+		top:  -g.currShape.bounds().y,
+	}
+
+	g.chanMoving <- &Moving{InvalidPoint, g.pos}
 }
 
 func (g *Game) start() {
@@ -154,26 +116,26 @@ func (g *Game) start() {
 		g.chanState <- STATE_ZERO
 	}
 
-	g.pos.sendTo(g.chanPos)
+	g.landing()
 	g.chanNexts <- true
 	g.chanScore <- g.score
 	g.chanLevel <- g.level
-	changeState(STATE_GAMING, g)
-	go startGame(g)
+	g.changeState(STATE_GAMING)
+	go g.startGame()
 }
 
-func startGame(g *Game) {
+func (g *Game) startGame() {
 	log.Println("start to game")
 	time.Sleep(time.Second)
 
-	for continueGame(g) {
-		time.Sleep(speed(g))
+	for g.continueGame() {
+		time.Sleep(g.speed())
 
 		// check if paused
 		g.m.Lock()
 		for STATE_PAUSED == g.state {
 			log.Println("wait to continue")
-			g.resumeCond.Wait()
+			g.stateOk.Wait()
 		}
 		g.m.Unlock()
 	}
@@ -181,57 +143,56 @@ func startGame(g *Game) {
 	log.Println("game over")
 }
 
-func continueGame(g *Game) bool {
+func (g *Game) continueGame() bool {
 	g.m.Lock()
 	defer g.m.Unlock()
 
-	pos, err := g.pos.moveDown()
-	if !isConflict(err, pos, g) {
-		changePosition(pos, g)
+	mv, err := g.currShape.moveDown(g.pos)
+	if g.canMove(err, mv) {
+		g.moveTo(mv)
 		return true
 	}
 
+	g.updateWaterLevel()
+
 	// if game over
-	if conflictWithModel(g.pos, g.currShape, g) {
-		changeState(SATE_GAMEOVER, g)
+	if 0 == g.waterLevel {
+		g.changeState(SATE_GAMEOVER)
 		return false
 	}
 
-	updateWaterLevel(g)
-	updateModel(g)
-	promote(g)
+	g.updateModel()
+	g.promote()
 
 	g.currShape = g.nextShape
 	g.nextShape = randShape()
-	g.pos = landingPoint(g.currShape)
-
-	g.pos.sendTo(g.chanPos)
+	g.landing()
 	g.chanNexts <- true
 
 	return true
 }
 
-func changeState(state int32, g *Game) {
+func (g *Game) changeState(state int32) {
 	g.state = state
 	g.chanState <- state
 }
 
-func changePosition(pos Point, g *Game) {
-	g.pos = pos
-	pos.sendTo(g.chanPos)
+func (g *Game) moveTo(mv *Moving) {
+	g.pos = mv.to
+	g.chanMoving <- mv
 }
 
-func updateWaterLevel(g *Game) {
+func (g *Game) updateWaterLevel() {
 	k := g.pos.top + g.currShape.bounds().y
 	if g.waterLevel > k {
 		g.waterLevel = k
 	}
 }
 
-func updateModel(g *Game) {
+func (g *Game) updateModel() {
 	p := g.pos
 	b := g.currShape.bounds()
-	d := g.currShape.data
+	d := &g.currShape.data
 
 	for i := b.x; i <= b.x2; i++ {
 		for j := b.y; j <= b.y2; j++ {
@@ -242,7 +203,7 @@ func updateModel(g *Game) {
 	}
 }
 
-func promote(g *Game) {
+func (g *Game) promote() {
 	p := g.pos
 	m := &g.model
 
@@ -259,8 +220,8 @@ func promote(g *Game) {
 		}
 		// erase k-th row
 		if k > 0 {
-			hilighRow(k, g)
-			eraseRow(k, g)
+			g.hilighRow(k)
+			g.eraseRow(k)
 			n++
 			top++
 			i++
@@ -288,15 +249,15 @@ func promote(g *Game) {
 }
 
 func earnScore(n int, level uint8) int {
-	return scoreTable[n-1] + 100*int(level)
+	return scores[n-1] + 100*int(level)
 }
 
-func hilighRow(k int, g *Game) {
+func (g *Game) hilighRow(k int) {
 	g.chanHiligh <- k
 }
 
 // Erase k-th row of g.model
-func eraseRow(k int, g *Game) {
+func (g *Game) eraseRow(k int) {
 	m := &g.model
 	top := g.waterLevel
 	for i := k; i >= top && i > 1; i-- {
@@ -305,22 +266,13 @@ func eraseRow(k int, g *Game) {
 	g.waterLevel++
 
 	// notify gui to redraw the area(top~k rows)
-	area := Point{top: top, otop: k}
+	area := &Area{y: top, y2: k}
 	g.chanRedraw <- area
 }
 
 // Returns an int value in miliseconds
-func speed(g *Game) time.Duration {
-	return time.Duration(speedTable[g.level]) * time.Millisecond
-}
-
-func landingPoint(s *Shape) Point {
-	return Point{
-		left:  (COL-SHAPE_SIZE)/2 + 1,
-		top:   -s.bounds().y,
-		oleft: -1,
-		otop:  -1,
-	}
+func (g *Game) speed() time.Duration {
+	return time.Duration(speeds[g.level]) * time.Millisecond
 }
 
 func (g *Game) pause() {
@@ -331,7 +283,7 @@ func (g *Game) pause() {
 		log.Printf("could not pause as current state is %d", g.state)
 		return
 	}
-	changeState(STATE_PAUSED, g)
+	g.changeState(STATE_PAUSED)
 	log.Println("game paused")
 }
 
@@ -343,8 +295,8 @@ func (g *Game) resume() {
 		log.Printf("could not resume as current state is %d", g.state)
 		return
 	}
-	changeState(STATE_GAMING, g)
-	g.resumeCond.Signal()
+	g.changeState(STATE_GAMING)
+	g.stateOk.Signal()
 	log.Println("game resumed")
 }
 
@@ -352,97 +304,75 @@ func (g *Game) rotate() {
 	g.m.Lock()
 	defer g.m.Unlock()
 
-	newShape := g.currShape.rotate()
-	if shapeOutOfBounds(g.pos, newShape) {
-		return
-	}
-	if checkRotateConflict(newShape, g.pos, g) {
-		return
-	}
+	newShape, mv, err := g.currShape.rotate(g.pos)
 
-	p := g.pos
-	pos := Point{p.left, p.top, p.left, p.top}
-	g.currShape = newShape
-	changePosition(pos, g)
+	if g.canMoveShape(newShape, err, mv) {
+		g.oldShape = g.currShape
+		g.currShape = newShape
+		g.moveTo(mv)
+	}
 }
 
 func (g *Game) moveLeft() {
 	g.m.Lock()
 	defer g.m.Unlock()
 
-	pos, err := g.pos.moveLeft()
-	if isConflict(err, pos, g) {
-		return
+	mv, err := g.currShape.moveLeft(g.pos)
+	if g.canMove(err, mv) {
+		g.moveTo(mv)
 	}
-	changePosition(pos, g)
 }
 
 func (g *Game) moveRight() {
 	g.m.Lock()
 	defer g.m.Unlock()
 
-	pos, err := g.pos.moveRight()
-	if isConflict(err, pos, g) {
-		return
+	mv, err := g.currShape.moveRight(g.pos)
+	if g.canMove(err, mv) {
+		g.moveTo(mv)
 	}
-	changePosition(pos, g)
 }
 
 func (g *Game) dropDown() {
 	g.m.Lock()
 	defer g.m.Unlock()
 
-	oldPos := g.pos
-	newPos := InvalidPoint
+	from := g.pos
+	to := InvalidPoint
+	s := g.currShape
 
-	for pos, err := oldPos.moveDown(); ; {
-		if checkConflict(err, pos, g) {
-			break
-		}
-		newPos = pos
-		pos, err = newPos.moveDown()
+	for mv, err := s.moveDown(from); g.canMove(err, mv); {
+		to = mv.to
+		mv, err = s.moveDown(to)
 	}
 
-	if newPos.isValid() {
-		newPos.oleft = oldPos.left
-		newPos.otop = oldPos.top
-
-		changePosition(newPos, g)
+	if to.valid() {
+		g.moveTo(&Moving{from, to})
 	}
 }
 
-// Return true if conflict
-func isConflict(err error, pos Point, g *Game) bool {
-	return err != nil ||
-		shapeOutOfBounds(pos, g.currShape) ||
-		conflictWithModel(pos, g.currShape, g)
+func (g *Game) canMove(err error, mv *Moving) bool {
+	return g.canMoveShape(g.currShape, err, mv)
 }
 
-func checkRotateConflict(shape *Shape, pos Point, g *Game) bool {
-	return shapeOutOfBounds(pos, shape) ||
-		conflictWithModel(pos, shape, g)
-}
+// Return true if can move
+func (g *Game) canMoveShape(shape *Shape, err error, mv *Moving) bool {
+	if err != nil {
+		return false
+	}
 
-func conflictWithModel(pos Point, shape *Shape, g *Game) bool {
-	b := shape.bounds()
-	d := shape.data
+	pos := mv.to
+	a := shape.area(pos)
+	d := &shape.data
 	m := &g.model
-	for i := b.x; i <= b.x2; i++ {
-		for j := b.y; j <= b.y2; j++ {
-			if m[pos.top+j][pos.left+i]&d[j][i] > 0 {
-				return true
+
+	for i := a.x; i <= a.x2; i++ {
+		for j := a.y; j <= a.y2; j++ {
+			if m[j][i]&d[j-pos.top][i-pos.left] > 0 { // conflict
+				return false
 			}
 		}
 	}
-	return false
-}
 
-func shapeOutOfBounds(pos Point, shape *Shape) bool {
-	b := shape.bounds()
-	return isOutOfBounds(pos.left+b.x, pos.top+b.y) ||
-		isOutOfBounds(pos.left+b.x2, pos.top+b.y2)
-}
-
-func isOutOfBounds(left, top int) bool {
-	return top > ROW-1 || left > COL-1 || top < 0 || left < 0
+	return true
 }

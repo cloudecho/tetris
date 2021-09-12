@@ -49,8 +49,8 @@ var (
 	RGB_COLOR_BLUE  = Rgb{168 / 255.0, 202 / 255.0, 1}
 	RGB_COLOR_GREEN = Rgb{132 / 255.0, 212 / 255.0, 129 / 255.0}
 
-	centralDa *gtk.DrawingArea
-	rightDa   *gtk.DrawingArea
+	leftDa  *gtk.DrawingArea
+	rightDa *gtk.DrawingArea
 
 	stateLabel *gtk.Label
 	scoreValue *gtk.Label
@@ -89,8 +89,8 @@ func GUI() {
 func showGame(g *Game) {
 	for {
 		select {
-		case pos := <-g.chanPos:
-			showCurrentShape(pos, g)
+		case mv := <-g.chanMoving:
+			showCurrentShape(mv, g)
 		case <-g.chanNexts:
 			showNextShape(g)
 		case state := <-g.chanState:
@@ -110,23 +110,23 @@ func showGame(g *Game) {
 		case score := <-g.chanScore:
 			scoreValue.SetMarkup(markup("#000", UNIT_SIZE, strconv.FormatUint(score, 10)))
 		case area := <-g.chanRedraw:
-			redrawArea(area, centralDa, g)
+			redrawArea(area, leftDa, g)
 		case row := <-g.chanHiligh:
-			drawHiligh(row, centralDa)
+			drawHiligh(row, leftDa)
 		}
 	}
 }
 
 func resetGui() {
-	fillBackgroud(centralDa, ROW, COL)
-	centralDa.QueueDraw()
+	fillBackgroud(leftDa, ROW, COL)
+	leftDa.QueueDraw()
 }
 
 // Redraw area (top~otop rows)
-func redrawArea(area Point, da *gtk.DrawingArea, g *Game) {
+func redrawArea(area *Area, da *gtk.DrawingArea, g *Game) {
 	m := &g.model
 	da.Connect(SIGNAL_DRAW, func(da *gtk.DrawingArea, cr *cairo.Context) {
-		for i := area.top; i <= area.otop; i++ { // top
+		for i := area.y; i <= area.y2; i++ { // top
 			for j := 0; j < COL; j++ { // left
 				rgb := rgb(m[i][j])
 				cr.SetSourceRGB(rgb[0], rgb[1], rgb[2])
@@ -166,40 +166,49 @@ func rgb(v uint8) Rgb {
 	return RGB_COLOR_GRAY
 }
 
-func showCurrentShape(pos Point, g *Game) {
-	shape := g.currShape
+func showCurrentShape(mv *Moving, g *Game) {
+	toErase := g.currShape
+	if mv.from.equals(mv.to) {
+		toErase = g.oldShape
+	}
 
-	// Hide the old shape
-	opos := Point{left: pos.oleft, top: pos.otop}
-	drawShape(opos, shape, RGB_COLOR_GRAY, true, centralDa, g)
+	// erase the old shape
+	drawShape(mv.from, toErase, RGB_COLOR_GRAY, leftDa)
 
-	// Show the current shape
-	drawShape(pos, shape, RGB_COLOR_BLUE, false, centralDa, g)
+	// draw the current shape
+	drawShape(mv.to, g.currShape, RGB_COLOR_BLUE, leftDa)
 }
 
 func showNextShape(g *Game) {
-	shape := g.nextShape
+	pos := Point{0, 0}
 
-	// Hide the old shape
-	pos := Point{left: 0, top: 0, otop: -2}
-	drawShape(pos, shape, RGB_COLOR_GRAY, true, rightDa, g)
+	// erase the old shape
+	drawShape(pos, nil, RGB_COLOR_GRAY, rightDa)
 
-	// Show the current shape
-	drawShape(pos, shape, RGB_COLOR_BLUE, false, rightDa, g)
+	// draw the current shape
+	drawShape(pos, g.nextShape, RGB_COLOR_BLUE, rightDa)
 }
 
-func drawShape(pos Point, shape *Shape, rgb Rgb, erase bool, da *gtk.DrawingArea, g *Game) {
-	// Show the current shape
+func drawShape(pos Point, shape *Shape, rgb Rgb, da *gtk.DrawingArea) {
+	if !pos.valid() {
+		return
+	}
+
+	var a *Area
+	if shape == nil { // for erase & rightDa
+		a = &Area{x: 0, y: 0, x2: SHAPE_SIZE - 1, y2: SHAPE_SIZE - 1}
+	} else {
+		a = shape.area(pos)
+	}
+
 	da.Connect(SIGNAL_DRAW, func(da *gtk.DrawingArea, cr *cairo.Context) {
 		cr.SetSourceRGB(rgb[0], rgb[1], rgb[2])
-		for i := 0; i < SHAPE_SIZE; i++ { // left
-			for j := 0; j < SHAPE_SIZE; j++ { // top
-				if !isOutOfBounds(pos.left+i, pos.top+j) &&
-					(erase && (pos.otop <= -2 || g.model[pos.top+j][pos.left+i] == 0) ||
-						!erase && shape.data[j][i] > 0) {
+		for i := a.x; i <= a.x2; i++ { // left
+			for j := a.y; j <= a.y2; j++ { // top
+				if shape == nil || shape.data[j-pos.top][i-pos.left] > 0 {
 					cr.Rectangle(
-						float64(pos.left+i)*UNIT_SIZE,
-						float64(pos.top+j)*UNIT_SIZE,
+						float64(i)*UNIT_SIZE,
+						float64(j)*UNIT_SIZE,
 						SPAN_SIZE,
 						SPAN_SIZE)
 				}
@@ -220,7 +229,7 @@ func newWindow(application *gtk.Application, g *Game) *gtk.ApplicationWindow {
 	win.SetTitle("TETRIS")
 	initTitleBar(win, g)
 
-	// Centrol & Right panels
+	// Left & Right panels
 	box, _ := gtk.BoxNew(gtk.ORIENTATION_HORIZONTAL, 10)
 	initLeftPanel(box)
 	initRightPanel(box)
@@ -327,7 +336,7 @@ func initLeftPanel(parent *gtk.Box) {
 	da, _ := gtk.DrawingAreaNew()
 	fillBackgroud(da, ROW, COL)
 	da.SetSizeRequest(COL*UNIT_SIZE, (ROW+1)*UNIT_SIZE)
-	centralDa = da
+	leftDa = da
 
 	parent.PackStart(da, true, true, 10)
 }

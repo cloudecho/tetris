@@ -10,4 +10,5 @@ go build -o bin/tetris  ./main
 
 ## Screenshot
 
-[A screenshot](tetris-screenshot.png)
+![A screenshot](tetris-screenshot.png)
+
